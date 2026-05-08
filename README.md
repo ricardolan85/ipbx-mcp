@@ -26,11 +26,35 @@ Variáveis de ambiente (carregadas automaticamente pelo `npm start` via `--env-f
 | `MYSQL_USER`         | sim         | —          |                                               |
 | `MYSQL_PASSWORD`     | não         | —          |                                               |
 | `MYSQL_DATABASE`     | sim         | —          |                                               |
+| `MCP_AUTH_TOKEN`     | **sim**     | —          | Bearer token estático para chamar `/mcp`      |
 | `PORT`               | não         | `3000`     | Porta HTTP                                    |
 | `HOST`               | não         | `0.0.0.0`  | Interface                                     |
 | `MCP_ALLOWED_HOSTS`  | não         | —          | Lista CSV de hosts aceitos no header `Host`   |
 
-> **Atenção:** o servidor não tem autenticação embutida. Em produção, restrinja acesso por firewall/IP allowlist ou coloque atrás de um reverse proxy autenticado.
+O servidor **se recusa a iniciar** se `MCP_AUTH_TOKEN` não estiver definido. Gere um token aleatório com:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+## Segurança
+
+A única proteção de aplicação é o bearer token. Toda requisição em `/mcp` (POST/GET/DELETE) precisa do header:
+
+```
+Authorization: Bearer <MCP_AUTH_TOKEN>
+```
+
+Sem ou com token inválido → `401 Unauthorized`. Comparação é feita em tempo constante (`crypto.timingSafeEqual`).
+
+O que **não** está coberto pelo código e fica por sua conta:
+
+- TLS — termine com reverse proxy (nginx/caddy) na frente
+- Rate limiting — sem proteção contra varredura/enumeração
+- Audit log — não há registro de quem consultou o quê
+- Restrição de IP — use firewall ou `MCP_ALLOWED_HOSTS` para limitar origens
+
+`/health` é público (não exige token) por ser usado em healthcheck de orquestrador.
 
 ## Uso
 
@@ -78,7 +102,10 @@ Para clientes que suportam Streamable HTTP (ex: Claude Desktop ≥ versão com `
   "mcpServers": {
     "portabilidade": {
       "type": "http",
-      "url": "http://SEU_HOST:3000/mcp"
+      "url": "http://SEU_HOST:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer SEU_TOKEN_AQUI"
+      }
     }
   }
 }

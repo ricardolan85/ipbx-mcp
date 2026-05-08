@@ -41,11 +41,22 @@ Não cacheie o `McpServer` no escopo do módulo: o ciclo é por requisição.
 O **pool MySQL** (`getPool()`) é o único singleton, e isso é proposital
 — reaproveitar conexões entre requisições é fundamental.
 
+## Segurança
+
+- **Bearer token estático obrigatório** via header `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+  O servidor não inicia se a env não estiver definida (`process.exit(1)` no bootstrap).
+- Comparação do token feita com `crypto.timingSafeEqual` para evitar
+  ataques de timing.
+- Auth aplicada nas rotas `/mcp` (POST/GET/DELETE). `/health` é público.
+- Camadas que **não** existem no código e dependem de infra: TLS,
+  rate limiting, audit log, restrição de IP. Documente quando alguma
+  for adicionada.
+
 ## Convenções
 
 - Variáveis de ambiente do MySQL são lidas só dentro de `getPool()`.
-  Variáveis de transporte (`PORT`, `HOST`, `MCP_ALLOWED_HOSTS`) são
-  lidas no bootstrap em `src/index.ts`.
+  Variáveis de transporte (`PORT`, `HOST`, `MCP_ALLOWED_HOSTS`,
+  `MCP_AUTH_TOKEN`) são lidas no bootstrap em `src/index.ts`.
 - Tools devem capturar erros e devolver `{ isError: true, content: [...] }`
   em vez de deixar a exceção propagar pro transporte.
 - Validação de input via `zod` é obrigatória — o número é normalizado
@@ -77,6 +88,7 @@ Smoke test rápido:
 ```bash
 curl -s http://localhost:3000/health
 curl -s -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'

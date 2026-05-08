@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import type { Request, Response } from "express";
+import { timingSafeEqual } from "node:crypto";
+import type { NextFunction, Request, Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { createServer } from "./server.js";
@@ -9,6 +10,36 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 const ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS
   ? process.env.MCP_ALLOWED_HOSTS.split(",").map((s) => s.trim()).filter(Boolean)
   : undefined;
+const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN;
+
+if (!AUTH_TOKEN) {
+  console.error(
+    "MCP_AUTH_TOKEN não definido. Defina a variável de ambiente antes de iniciar.",
+  );
+  process.exit(1);
+}
+
+const expectedToken = Buffer.from(AUTH_TOKEN);
+
+function tokenMatches(provided: string): boolean {
+  const got = Buffer.from(provided);
+  if (got.length !== expectedToken.length) return false;
+  return timingSafeEqual(expectedToken, got);
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.header("authorization") ?? "";
+  const match = /^Bearer (.+)$/.exec(header);
+  if (!match || !tokenMatches(match[1])) {
+    res.status(401).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Unauthorized" },
+      id: null,
+    });
+    return;
+  }
+  next();
+}
 
 const app = createMcpExpressApp({ host: HOST, allowedHosts: ALLOWED_HOSTS });
 
@@ -16,7 +47,7 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", requireAuth, async (req, res) => {
   const server = createServer();
   try {
     const transport = new StreamableHTTPServerTransport({
@@ -48,8 +79,8 @@ const methodNotAllowed = (_req: Request, res: Response) => {
   });
 };
 
-app.get("/mcp", methodNotAllowed);
-app.delete("/mcp", methodNotAllowed);
+app.get("/mcp", requireAuth, methodNotAllowed);
+app.delete("/mcp", requireAuth, methodNotAllowed);
 
 app.listen(PORT, HOST, (err?: Error) => {
   if (err) {
