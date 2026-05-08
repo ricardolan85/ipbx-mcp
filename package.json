@@ -1,0 +1,30 @@
+{
+  "name": "mcp-portabilidade",
+  "version": "0.1.0",
+  "description": "MCP server para portabilidade",
+  "type": "module",
+  "bin": {
+    "mcp-portabilidade": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file=.env dist/index.js",
+    "dev": "tsc --watch",
+    "inspect": "npx @modelcontextprotocol/inspector node --env-file=.env dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "mysql2": "^3.11.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.6"
+  }
+}
