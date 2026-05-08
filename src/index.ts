@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { consultaTN } from "./db.js";
+import { nomeOperadora } from "./operadoras.js";
 
 const server = new McpServer({
   name: "mcp-portabilidade",
@@ -36,6 +37,7 @@ server.tool(
               {
                 numero,
                 idoperadora: row.idoperadora,
+                operadora: nomeOperadora(row.idoperadora),
                 CIO: row.CIO,
                 IsPortado: Boolean(row.IsPortado),
               },
