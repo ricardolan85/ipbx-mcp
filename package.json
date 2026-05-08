@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "check": "tsc --noEmit",
     "start": "node --env-file=.env dist/index.js",
     "dev": "tsc --watch",
     "inspect": "npx @modelcontextprotocol/inspector node --env-file=.env dist/index.js"
