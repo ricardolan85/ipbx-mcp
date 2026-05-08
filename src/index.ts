@@ -1,69 +1,67 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { consultaTN } from "./db.js";
-import { nomeOperadora } from "./operadoras.js";
+import type { Request, Response } from "express";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import { createServer } from "./server.js";
 
-const server = new McpServer({
-  name: "mcp-portabilidade",
-  version: "0.1.0",
+const PORT = Number(process.env.PORT ?? 3000);
+const HOST = process.env.HOST ?? "0.0.0.0";
+const ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS
+  ? process.env.MCP_ALLOWED_HOSTS.split(",").map((s) => s.trim()).filter(Boolean)
+  : undefined;
+
+const app = createMcpExpressApp({ host: HOST, allowedHosts: ALLOWED_HOSTS });
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
 });
 
-server.tool(
-  "consultar-portabilidade",
-  "Consulta status de portabilidade de um número via stored procedure consultaTN.",
-  {
-    numero: z
-      .string()
-      .regex(/^\d{10,13}$/)
-      .describe("Número apenas com dígitos (DDI+DDD+assinante), ex: 553534733100"),
-  },
-  async ({ numero }) => {
-    try {
-      const row = await consultaTN(numero);
-      if (!row) {
-        return {
-          content: [
-            { type: "text", text: `Nenhum resultado para ${numero}.` },
-          ],
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                numero,
-                idoperadora: row.idoperadora,
-                operadora: nomeOperadora(row.idoperadora),
-                CIO: row.CIO,
-                IsPortado: Boolean(row.IsPortado),
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return {
-        isError: true,
-        content: [{ type: "text", text: `Erro na consulta: ${msg}` }],
-      };
+app.post("/mcp", async (req, res) => {
+  const server = createServer();
+  try {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    res.on("close", () => {
+      transport.close();
+      server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    console.error("Erro no /mcp:", err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
     }
-  },
-);
-
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("mcp-portabilidade rodando via stdio");
-}
-
-main().catch((err) => {
-  console.error("Erro fatal:", err);
-  process.exit(1);
+  }
 });
+
+const methodNotAllowed = (_req: Request, res: Response) => {
+  res.status(405).json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method not allowed." },
+    id: null,
+  });
+};
+
+app.get("/mcp", methodNotAllowed);
+app.delete("/mcp", methodNotAllowed);
+
+app.listen(PORT, HOST, (err?: Error) => {
+  if (err) {
+    console.error("Falha ao iniciar:", err);
+    process.exit(1);
+  }
+  console.error(`mcp-portabilidade ouvindo em http://${HOST}:${PORT}/mcp`);
+});
+
+const shutdown = (signal: string) => () => {
+  console.error(`Recebido ${signal}, encerrando...`);
+  process.exit(0);
+};
+process.on("SIGINT", shutdown("SIGINT"));
+process.on("SIGTERM", shutdown("SIGTERM"));
