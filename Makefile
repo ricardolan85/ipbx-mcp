@@ -11,7 +11,7 @@ build:
 	docker image build . -t portabilidade-mcp:$(VERSION)
 
 run:
-	docker container run -d --env-file .env --network host -v portabilidade_data:/data --name portabilidade-mcp portabilidade-mcp:$(VERSION)
+	docker container run -d --env-file .env -p 50002:3000 -v portabilidade_data:/data --name portabilidade-mcp portabilidade-mcp:$(VERSION)
 
 stop:
 	docker stop portabilidade-mcp 2>/dev/null || true

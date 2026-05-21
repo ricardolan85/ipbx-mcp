@@ -5,7 +5,7 @@ services:
     container_name: portabilidade-mcp
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "50002:3000"
     env_file:
       - .env
     volumes:
