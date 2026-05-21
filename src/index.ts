@@ -1,11 +1,31 @@
 #!/usr/bin/env node
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { createServer } from "./server.js";
 import { requireAuth } from "./auth/middleware.js";
 import { getDb, closeDb } from "./sqlite.js";
 import { registerOAuthRoutes } from "./oauth/routes.js";
+
+// Log de acesso pras rotas /mcp. Roda ANTES do requireAuth, entao
+// pega tambem 401 (anon) - util pra detectar tentativas com token
+// errado.
+function logMcpAccess(req: Request, res: Response, next: NextFunction): void {
+  const start = Date.now();
+  res.on("finish", () => {
+    const body = req.body as
+      | { method?: string; params?: { name?: string } }
+      | undefined;
+    const rpc = body?.method ?? "?";
+    const tool = body?.params?.name;
+    const tag = tool ? `${rpc}(${tool})` : rpc;
+    const who = req.identity?.email ?? "anon";
+    console.error(
+      `[mcp] ${who} ${req.method} ${tag} -> ${res.statusCode} ${Date.now() - start}ms`,
+    );
+  });
+  next();
+}
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -61,7 +81,7 @@ if (OAUTH_FLOW_READY) {
   registerOAuthRoutes(app);
 }
 
-app.post("/mcp", requireAuth, async (req, res) => {
+app.post("/mcp", logMcpAccess, requireAuth, async (req, res) => {
   const identity = req.identity!;
   const server = createServer(identity);
   try {
@@ -94,8 +114,8 @@ const methodNotAllowed = (_req: Request, res: Response) => {
   });
 };
 
-app.get("/mcp", requireAuth, methodNotAllowed);
-app.delete("/mcp", requireAuth, methodNotAllowed);
+app.get("/mcp", logMcpAccess, requireAuth, methodNotAllowed);
+app.delete("/mcp", logMcpAccess, requireAuth, methodNotAllowed);
 
 app.listen(PORT, HOST, (err?: Error) => {
   if (err) {
