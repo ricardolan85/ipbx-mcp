@@ -199,14 +199,16 @@ Schemas existentes:
 
 Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
-como volume pro SQLite, healthcheck no `/health`. `docker-compose.yml`
-orquestra com `env_file: .env`, volume nomeado `portabilidade_data:/data` e
-porta `3000:3000`.
+como volume pro SQLite, healthcheck no `/health`. Orquestração via
+`Makefile` — `docker run` direto com `--env-file .env`, volume
+nomeado `portabilidade_data:/data` e mapeamento `50002:3000`.
 
 ```bash
-docker compose build
-docker compose up -d
-docker compose logs -f
+make build     # docker image build
+make run       # docker container run (detached)
+make stop      # docker stop + rm
+make update    # git pull + build + stop + run
+docker logs -f portabilidade-mcp
 ```
 
 Backup do SQLite:
