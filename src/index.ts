@@ -14,11 +14,22 @@ function logMcpAccess(req: Request, res: Response, next: NextFunction): void {
   const start = Date.now();
   res.on("finish", () => {
     const body = req.body as
-      | { method?: string; params?: { name?: string } }
+      | {
+          method?: string;
+          params?: { name?: string; arguments?: Record<string, unknown> };
+        }
       | undefined;
     const rpc = body?.method ?? "?";
     const tool = body?.params?.name;
-    const tag = tool ? `${rpc}(${tool})` : rpc;
+    const args = body?.params?.arguments;
+    const argsStr =
+      args && typeof args === "object"
+        ? " " +
+          Object.entries(args)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(" ")
+        : "";
+    const tag = tool ? `${rpc}(${tool}${argsStr})` : rpc;
     const who = req.identity?.email ?? "anon";
     console.error(
       `[mcp] ${who} ${req.method} ${tag} -> ${res.statusCode} ${Date.now() - start}ms`,
