@@ -200,7 +200,7 @@ Schemas existentes:
 Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
 como volume pro SQLite, healthcheck no `/health`. `docker-compose.yml`
-orquestra com `env_file: .env`, volume nomeado `mcp-data:/data` e
+orquestra com `env_file: .env`, volume nomeado `portabilidade_data:/data` e
 porta `3000:3000`.
 
 ```bash
@@ -212,7 +212,7 @@ docker compose logs -f
 Backup do SQLite:
 
 ```bash
-docker run --rm -v portabilidade-mcp_mcp-data:/data -v $PWD:/backup \
+docker run --rm -v portabilidade_data:/data -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
 

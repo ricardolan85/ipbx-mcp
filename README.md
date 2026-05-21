@@ -142,7 +142,7 @@ Backup do SQLite:
 
 ```bash
 docker run --rm \
-  -v portabilidade-mcp_mcp-data:/data \
+  -v portabilidade_data:/data \
   -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
