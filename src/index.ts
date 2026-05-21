@@ -13,6 +13,14 @@ const ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS
   ? process.env.MCP_ALLOWED_HOSTS.split(",").map((s) => s.trim()).filter(Boolean)
   : undefined;
 
+// API de portabilidade e obrigatoria - e a unica fonte de dados das tools.
+if (!process.env.PORTABILIDADE_API_URL || !process.env.PORTABILIDADE_API_KEY) {
+  console.error(
+    "PORTABILIDADE_API_URL e PORTABILIDADE_API_KEY sao obrigatorias.",
+  );
+  process.exit(1);
+}
+
 // Pelo menos um caminho de auth precisa estar configurado.
 const HAS_STATIC = Boolean(process.env.MCP_AUTH_TOKEN);
 const HAS_JWT = Boolean(process.env.OAUTH_JWT_SECRET && process.env.OAUTH_ISSUER);

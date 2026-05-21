@@ -6,9 +6,9 @@ Guia para o Claude Code ao trabalhar neste repositório.
 
 Servidor MCP em TypeScript (módulo ESM, transporte **Streamable HTTP**
 em modo stateless) que expõe tools para consultar dados de portabilidade
-armazenados em um MySQL interno da Vivavox. A lógica de domínio fica
-concentrada em stored procedures do banco — o servidor é uma camada
-fina de validação e formatação.
+via uma **API HTTP interna da provedora** (autenticada por `x-api-key`).
+O servidor é uma camada fina de validação, formatação e autenticação
+de usuários — toda a lógica de domínio mora na API upstream.
 
 URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
 
@@ -16,7 +16,9 @@ URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
 
 - `@modelcontextprotocol/sdk` — `McpServer` + `StreamableHTTPServerTransport`
   + `createMcpExpressApp` (Express embutido no SDK)
-- `mysql2/promise` — pool de conexões
+- `fetch` nativo do Node — cliente da API de portabilidade
+- `better-sqlite3` — persistência local (OAuth + audit)
+- `jose` — assinatura/validação de JWTs
 - `zod` — schemas de input das tools
 - TypeScript estrito, alvo `ES2022`, `module: Node16`
 
@@ -47,24 +49,22 @@ URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
 - `src/server.ts` — `createServer()` instancia o `McpServer` e registra
   cada tool. Chamado **uma vez por requisição** (modo stateless), então
   evite estado mutável no escopo do módulo.
-- `src/db.ts` — `getPool()` lazy (lê env vars na primeira chamada) e
-  wrappers tipados para cada stored procedure. Toda nova consulta a SP
-  deve virar uma função aqui, não código solto na tool.
+- `src/portabilidade.ts` — cliente HTTP da API da provedora. Lê
+  `PORTABILIDADE_API_URL` e `PORTABILIDADE_API_KEY` por chamada. Toda
+  nova consulta à API deve virar uma função tipada aqui, não `fetch`
+  solto na tool.
 - `src/sqlite.ts` — `getDb()` lazy. Abre `SQLITE_PATH` (default
   `./data/app.db`), aplica pragmas (`journal_mode=WAL`,
   `foreign_keys=ON`) e roda todos os `sql/*.sql` em ordem alfabética
   (idempotente — schemas usam `IF NOT EXISTS`).
-- `src/operadoras.ts` — carrega `data/idoperadora.txt` em cache e
-  resolve `idoperadora -> nome`.
-
 ## Modo stateless e ciclo de vida
 
 Cada `POST /mcp` faz: `createServer()` → novo `StreamableHTTPServerTransport`
 com `sessionIdGenerator: undefined` → `server.connect(transport)` →
 `transport.handleRequest`. No `res.on("close")` fechamos transport e server.
 Não cacheie o `McpServer` no escopo do módulo: o ciclo é por requisição.
-O **pool MySQL** (`getPool()`) é o único singleton, e isso é proposital
-— reaproveitar conexões entre requisições é fundamental.
+A conexão SQLite (`getDb()`) é singleton — better-sqlite3 já é seguro
+pra uso concorrente leitor/escritor no mesmo processo (WAL).
 
 ## Segurança
 
@@ -102,9 +102,11 @@ camada de aplicação.
 
 ## Convenções
 
-- Variáveis de ambiente do MySQL são lidas só dentro de `getPool()`.
-  Variáveis de transporte (`PORT`, `HOST`, `MCP_ALLOWED_HOSTS`,
-  `MCP_AUTH_TOKEN`) são lidas no bootstrap em `src/index.ts`.
+- Variáveis da API (`PORTABILIDADE_API_URL`, `PORTABILIDADE_API_KEY`)
+  são lidas dentro de `consultarPortabilidade()` mas validadas como
+  obrigatórias no bootstrap. Variáveis de transporte (`PORT`, `HOST`,
+  `MCP_ALLOWED_HOSTS`, `MCP_AUTH_TOKEN`) são lidas no bootstrap em
+  `src/index.ts`.
 - Tools devem capturar erros e devolver `{ isError: true, content: [...] }`
   em vez de deixar a exceção propagar pro transporte.
 - Validação de input via `zod` é obrigatória — o número é normalizado
@@ -118,28 +120,29 @@ camada de aplicação.
   chamador (`user_email` quando JWT, `auth_kind='service'` e
   `user_email='service:static'` quando bearer estático).
 
-## Stored procedures conhecidas
+## API de portabilidade (provedora)
 
-- `consultaTN(numero VARCHAR)` → 1 linha com `idoperadora`, `CIO`,
-  `IsPortado`. `IsPortado` chega como `0|1` e é convertido para boolean
-  na tool.
+- **Base URL:** `PORTABILIDADE_API_URL` (interno, ex:
+  `http://138.94.55.156:50500`).
+- **Auth:** header `x-api-key: $PORTABILIDADE_API_KEY` (chave estática
+  fornecida pela provedora).
+- **Endpoint:** `GET {URL}/portabilidade/{numero}` — sempre 200.
+- **Resposta:**
+  ```json
+  {"numero":"553534733100","encontrado":true,"idoperadora":55282,"cio":1,"portado":true}
+  ```
+  Quando `encontrado: false`, os demais campos podem vir ausentes.
+- **Migração:** o MySQL com SP `consultaTN` foi descontinuado pela
+  provedora em mai/2026. A API mantém os mesmos `idoperadora` que
+  o `data/idoperadora.txt` mapeia.
 
-## Persistência: dois bancos
+## Persistência local (SQLite)
 
-O servidor fala com **dois bancos** com responsabilidades distintas:
-
-- **MySQL da provedora** (read-only do nosso lado) — só pra chamar
-  stored procedures como `consultaTN`. Não criamos schema/tabelas
-  lá. Acesso via `src/db.ts` + pool `mysql2`.
-- **SQLite local** — toda escrita do MCP: clients OAuth registrados
-  via DCR, authorization codes, refresh tokens, audit log. Vive em
-  arquivo apontado por `SQLITE_PATH` (default `./data/app.db` dev,
-  `/data/app.db` em prod via volume Docker). Acesso via `src/sqlite.ts`
-  + `better-sqlite3`.
-
-Restrição: o MySQL pertence à provedora e não temos permissão pra
-criar tabelas lá. Por isso o SQLite local — solução prática que evita
-provisionar mais infra.
+Toda escrita do MCP vai pra um SQLite local: clients OAuth registrados
+via DCR, authorization codes, refresh tokens, audit log. Vive em
+arquivo apontado por `SQLITE_PATH` (default `./data/app.db` dev,
+`/data/app.db` em prod via volume Docker). Acesso via `src/sqlite.ts`
++ `better-sqlite3`.
 
 ## Migrations SQL
 
@@ -157,6 +160,8 @@ Schemas existentes:
 
 - `sql/001_oauth_schema.sql` — `oauth_clients`, `oauth_codes`,
   `oauth_refresh_tokens`, `audit_log`
+- `sql/002_oauth_authorize_tx.sql` — `oauth_authorize_tx` (estado
+  efêmero do flow Google, single-use)
 
 ## Comandos úteis
 

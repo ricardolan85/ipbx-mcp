@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { consultaTN } from "./db.js";
-import { nomeOperadora } from "./operadoras.js";
+import { consultarPortabilidade } from "./portabilidade.js";
 import { logToolCall, type AuthIdentity } from "./audit.js";
 
 export function createServer(identity: AuthIdentity): McpServer {
@@ -12,7 +11,7 @@ export function createServer(identity: AuthIdentity): McpServer {
 
   server.tool(
     "consultar-portabilidade",
-    "Consulta status de portabilidade de um número via stored procedure consultaTN.",
+    "Consulta status de portabilidade de um número via API da provedora.",
     {
       numero: z
         .string()
@@ -22,14 +21,14 @@ export function createServer(identity: AuthIdentity): McpServer {
     async ({ numero }) => {
       const start = Date.now();
       try {
-        const row = await consultaTN(numero);
+        const row = await consultarPortabilidade(numero);
         const result = row
           ? {
               numero,
               idoperadora: row.idoperadora,
-              operadora: nomeOperadora(row.idoperadora),
-              CIO: row.CIO,
-              IsPortado: Boolean(row.IsPortado),
+              operadora: row.operadora,
+              CIO: row.cio,
+              IsPortado: row.portado,
             }
           : null;
 
