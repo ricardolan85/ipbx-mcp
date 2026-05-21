@@ -10,7 +10,7 @@ via uma **API HTTP interna da provedora** (autenticada por `x-api-key`).
 O servidor é uma camada fina de validação, formatação e autenticação
 de usuários — toda a lógica de domínio mora na API upstream.
 
-URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
+URL pública canônica: `https://mcp.portabilidade.vivavox.com.br`.
 
 ## Stack
 
@@ -24,7 +24,7 @@ URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
 
 ## Infra de produção
 
-- **URL canônica:** `https://portabilidade.mcp.vivavox.com.br`
+- **URL canônica:** `https://mcp.portabilidade.vivavox.com.br`
 - **URL legada** (em migração — derruba quando todos os clientes
   trocarem): `https://mcp.vivavox.com.br/portabilidade`
 - **Reverse proxy:** Nginx Proxy Manager em Docker, IP público
@@ -38,8 +38,9 @@ URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
   do NPM já injeta — duplicar dá erro de validação.
 - **Decisão arquitetural — um subdomínio por MCP, nunca subpath:**
   spec OAuth do MCP busca `/.well-known/oauth-*` na raiz do host.
-  Subpath quebra discovery e mistura cookies entre MCPs. Próximos
-  MCPs nascem como `outro.mcp.vivavox.com.br`.
+  Subpath quebra discovery e mistura cookies entre MCPs. Convenção
+  de nomes: `mcp.<servico>.vivavox.com.br` (ex: próximo MCP nasce
+  como `mcp.outroservico.vivavox.com.br`).
 
 ## Arquitetura
 
@@ -57,6 +58,25 @@ URL pública canônica: `https://portabilidade.mcp.vivavox.com.br`.
   `./data/app.db`), aplica pragmas (`journal_mode=WAL`,
   `foreign_keys=ON`) e roda todos os `sql/*.sql` em ordem alfabética
   (idempotente — schemas usam `IF NOT EXISTS`).
+- `src/audit.ts` — `logToolCall()` grava cada chamada de tool em
+  `audit_log` com identidade, duração e resultado. Falha de audit
+  não derruba a chamada da tool (loga e segue).
+- `src/auth/jwt.ts` — assinatura/verificação de access tokens HS256
+  via `jose`. TTL exposto em `ACCESS_TTL_SECONDS`.
+- `src/auth/middleware.ts` — `requireAuth`: tenta JWT primeiro, cai
+  pro bearer estático. 401 inclui `WWW-Authenticate` com
+  `resource_metadata` (necessário pro discovery do claude.ai).
+- `src/oauth/routes.ts` — registra todos os endpoints OAuth.
+  Coordena `store.ts` (clients/codes/refresh/tx), `pkce.ts` e
+  `google.ts`. Só é montado se o flow OAuth estiver completo
+  (`OAUTH_FLOW_READY` em `index.ts`).
+- `src/oauth/store.ts` — DCR clients, authorization codes (single-use
+  atômico), refresh tokens (rotação), authorize-tx (state Google
+  ↔ params do cliente).
+- `src/oauth/google.ts` — cliente do IdP: monta URL de authorize,
+  troca code, valida `id_token` contra a JWKS do Google.
+- `src/oauth/pkce.ts` — verificação S256 em tempo constante.
+
 ## Modo stateless e ciclo de vida
 
 Cada `POST /mcp` faz: `createServer()` → novo `StreamableHTTPServerTransport`
@@ -68,33 +88,41 @@ pra uso concorrente leitor/escritor no mesmo processo (WAL).
 
 ## Segurança
 
-**Estado atual (em produção):**
+Dois caminhos de auth coexistem em `/mcp` (POST/GET/DELETE) — pelo
+menos um precisa estar configurado, o servidor não inicia sem
+nenhum. `/health` e as rotas OAuth (`/.well-known/*`, `/register`,
+`/authorize`, `/oauth/google/callback`, `/token`) são públicas.
 
-- **Bearer token estático obrigatório** via header
-  `Authorization: Bearer <MCP_AUTH_TOKEN>`. O servidor não inicia se a
-  env não estiver definida (`process.exit(1)` no bootstrap).
+**1. Bearer estático** (cobre Claude Desktop, CLI, API, scripts):
+
+- Header `Authorization: Bearer <MCP_AUTH_TOKEN>`.
 - Comparação em tempo constante (`crypto.timingSafeEqual`).
-- Auth aplicada nas rotas `/mcp` (POST/GET/DELETE). `/health` é público.
+- Identidade no audit: `auth_kind='service'`, `user_email='service:static'`.
 
-**OAuth 2.1 Google Workspace (em construção):**
+**2. OAuth 2.1 + Google Workspace** (cobre claude.ai web/mobile):
 
-Motivação: clientes via claude.ai (web/mobile) só aceitam Custom
-Connectors com OAuth — bearer estático cobre Claude Desktop, CLI e
-API, mas não claude.ai.
-
+- Discovery via `/.well-known/oauth-authorization-server` e
+  `/.well-known/oauth-protected-resource` (RFC 8414 + 9728).
+- Dynamic Client Registration (RFC 7591) público em `/register`.
+- `/authorize` → redireciona pro Google com `hd=vivavox.com.br`.
+- `/oauth/google/callback` → valida `id_token` (JWKS do Google) +
+  claim `hd`.
+- `/token` → `authorization_code` (PKCE S256 obrigatório) e
+  `refresh_token` (rotação a cada uso).
+- Access tokens são JWTs HS256 — **não persistidos no DB**. Refresh
+  tokens são opacos e ficam em `oauth_refresh_tokens`.
 - Audiência: time interno + parceiros/consultorias, todos com email
-  `@vivavox.com.br` (parceiros recebem guest account no Workspace).
-- IdP: Google OAuth com parâmetro `hd=vivavox.com.br`. OAuth consent
-  screen em modo **Internal** bloqueia logins fora do Workspace na
-  origem (defesa em profundidade — código também valida o claim `hd`).
-- Servidor implementa o shim OAuth do MCP spec (discovery + DCR +
-  authorize + token) e delega autenticação pro Google.
-- Access tokens são JWTs HS256 assinados pelo servidor —
-  **não persistidos no DB**. Refresh tokens são opacos e ficam em
-  `oauth_refresh_tokens`.
-- Os dois caminhos coexistem no `requireAuth`: JWT primeiro, fallback
-  pro bearer estático. Quando os clientes migrarem, mata o
-  `MCP_AUTH_TOKEN`.
+  `@vivavox.com.br`. Defesa em profundidade: consent screen em modo
+  **Internal** (bloqueia logins fora do Workspace na origem) +
+  validação do claim `hd` no callback.
+- Identidade no audit: `auth_kind='user'`, `user_email=<email Google>`.
+
+O `requireAuth` tenta JWT primeiro e cai pro bearer estático. Quando
+todos os clientes migrarem, mata o `MCP_AUTH_TOKEN`.
+
+Resposta 401 do `/mcp` inclui `WWW-Authenticate: Bearer realm=...,
+resource_metadata="<issuer>/.well-known/oauth-protected-resource"` —
+sem isso claude.ai não descobre o AS no primeiro contato.
 
 **Continua dependendo da infra (NPM):** TLS, rate limiting,
 restrição de IP. Documente quando alguma for adicionada na
@@ -102,11 +130,14 @@ camada de aplicação.
 
 ## Convenções
 
-- Variáveis da API (`PORTABILIDADE_API_URL`, `PORTABILIDADE_API_KEY`)
-  são lidas dentro de `consultarPortabilidade()` mas validadas como
-  obrigatórias no bootstrap. Variáveis de transporte (`PORT`, `HOST`,
-  `MCP_ALLOWED_HOSTS`, `MCP_AUTH_TOKEN`) são lidas no bootstrap em
-  `src/index.ts`.
+- Variáveis lidas no bootstrap (`src/index.ts`, fail-fast):
+  `PORTABILIDADE_API_URL`, `PORTABILIDADE_API_KEY`, e pelo menos um
+  caminho de auth (`MCP_AUTH_TOKEN` ou `OAUTH_JWT_SECRET +
+  OAUTH_ISSUER`). Transporte: `PORT`, `HOST`, `MCP_ALLOWED_HOSTS`.
+- Variáveis lidas sob demanda: a chave da API é relida em cada
+  chamada de `consultarPortabilidade()`; envs do Google (`GOOGLE_*`,
+  `ALLOWED_GOOGLE_HD`) são lidas dentro do código OAuth e lançam
+  erro se ausentes na primeira chamada.
 - Tools devem capturar erros e devolver `{ isError: true, content: [...] }`
   em vez de deixar a exceção propagar pro transporte.
 - Validação de input via `zod` é obrigatória — o número é normalizado
@@ -133,8 +164,9 @@ camada de aplicação.
   ```
   Quando `encontrado: false`, os demais campos podem vir ausentes.
 - **Migração:** o MySQL com SP `consultaTN` foi descontinuado pela
-  provedora em mai/2026. A API mantém os mesmos `idoperadora` que
-  o `data/idoperadora.txt` mapeia.
+  provedora em mai/2026. A API substitui inclusive o lookup local
+  de nome de operadora — `data/idoperadora.txt` foi removido junto
+  com `src/operadoras.ts`.
 
 ## Persistência local (SQLite)
 
@@ -163,20 +195,45 @@ Schemas existentes:
 - `sql/002_oauth_authorize_tx.sql` — `oauth_authorize_tx` (estado
   efêmero do flow Google, single-use)
 
+## Deploy
+
+Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
+(`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
+como volume pro SQLite, healthcheck no `/health`. `docker-compose.yml`
+orquestra com `env_file: .env`, volume nomeado `mcp-data:/data` e
+porta `3000:3000`.
+
+```bash
+docker compose build
+docker compose up -d
+docker compose logs -f
+```
+
+Backup do SQLite:
+
+```bash
+docker run --rm -v portabilidade-mcp_mcp-data:/data -v $PWD:/backup \
+  alpine tar czf /backup/sqlite-bkp.tgz -C /data .
+```
+
+Alternativa: rodar como serviço systemd com `EnvironmentFile=.env` e
+`ExecStart=/usr/bin/node dist/index.js`.
+
 ## Comandos úteis
 
 ```bash
 npm run build      # tsc
 npm run check      # tsc --noEmit
-npm start          # node --env-file=.env dist/index.js
+npm start          # node dist/index.js (envs vem do ambiente / .env)
 npm run dev        # tsc --watch
 npm run inspect    # MCP Inspector
 ```
 
-Smoke test rápido:
+Smoke test rápido (local):
 
 ```bash
 curl -s http://localhost:3000/health
+curl -s http://localhost:3000/.well-known/oauth-authorization-server
 curl -s -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
   -H "Content-Type: application/json" \
@@ -186,17 +243,16 @@ curl -s -X POST http://localhost:3000/mcp \
 
 ## O que NÃO fazer
 
-- Não commitar `.env` (já está no `.gitignore`).
+- Não commitar `.env` ou `data/` (ambos no `.gitignore`).
 - Não adicionar uma tool `ping` ou similar — o protocolo MCP já tem
   health check no `initialize` handshake.
-- Não trocar `--env-file` por dotenv sem motivo: a flag nativa do Node
-  20.6+ evita uma dependência.
 - Não cachear o `McpServer` em escopo de módulo: stateless = um server
   por request.
 - Não voltar pro transporte stdio: este servidor foi planejado pra
-  rodar como daemon HTTP (systemd, Docker, etc.).
-- Não bindar em `0.0.0.0` sem firewall/IP allowlist na frente — não
-  há autenticação na camada da aplicação.
+  rodar como daemon HTTP (Docker/systemd).
+- Não bindar em `0.0.0.0` sem ter pelo menos um caminho de auth
+  configurado. O bootstrap já recusa subir sem `MCP_AUTH_TOKEN` nem
+  `OAUTH_JWT_SECRET+OAUTH_ISSUER`, mas vale o lembrete.
 - Não aceitar login com email fora de `@vivavox.com.br`. Restrição da
   liderança. Valida o claim `hd` no callback do Google **mesmo** com
   consent screen Internal (defesa em profundidade).
