@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 
 const ALG = "HS256";
-const ACCESS_TTL = "1h";
+export const ACCESS_TTL_SECONDS = 3600;
 
 function getSecret(): Uint8Array {
   const secret = process.env.OAUTH_JWT_SECRET;
@@ -36,7 +36,7 @@ export async function signAccessToken(claims: {
     .setIssuer(issuer)
     .setAudience(issuer)
     .setIssuedAt()
-    .setExpirationTime(ACCESS_TTL)
+    .setExpirationTime(`${ACCESS_TTL_SECONDS}s`)
     .sign(getSecret());
 }
 

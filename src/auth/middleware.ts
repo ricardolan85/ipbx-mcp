@@ -21,6 +21,17 @@ function staticTokenMatches(provided: string): boolean {
 }
 
 function unauthorized(res: Response): void {
+  // RFC 9728: aponta clientes MCP pra descoberta do AS via header.
+  // Sem isso, claude.ai nao acha o endpoint OAuth no primeiro 401.
+  const issuer = process.env.OAUTH_ISSUER?.replace(/\/$/, "");
+  if (issuer) {
+    res.setHeader(
+      "WWW-Authenticate",
+      `Bearer realm="${issuer}", resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
+    );
+  } else {
+    res.setHeader("WWW-Authenticate", `Bearer realm="mcp-portabilidade"`);
+  }
   res.status(401).json({
     jsonrpc: "2.0",
     error: { code: -32001, message: "Unauthorized" },

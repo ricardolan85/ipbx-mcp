@@ -5,6 +5,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { createServer } from "./server.js";
 import { requireAuth } from "./auth/middleware.js";
 import { getDb, closeDb } from "./sqlite.js";
+import { registerOAuthRoutes } from "./oauth/routes.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -23,6 +24,19 @@ if (!HAS_STATIC && !HAS_JWT) {
   process.exit(1);
 }
 
+// Para ativar o fluxo OAuth completo (rotas /authorize, callback Google,
+// /token) precisamos das credenciais do Google. Sem elas, podemos ter
+// JWT (validar tokens emitidos antes) mas nao emitir novos pela UI.
+const OAUTH_FLOW_READY =
+  HAS_JWT &&
+  Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+if (HAS_JWT && !OAUTH_FLOW_READY) {
+  console.error(
+    "AVISO: OAUTH_JWT_SECRET definido mas GOOGLE_CLIENT_ID/SECRET ausentes. " +
+      "Rotas /authorize, /oauth/google/callback e /token nao serao registradas.",
+  );
+}
+
 // Inicializa SQLite cedo: cria arquivo, aplica schemas, pega o erro
 // agora em vez de na primeira requisicao.
 getDb();
@@ -32,6 +46,12 @@ const app = createMcpExpressApp({ host: HOST, allowedHosts: ALLOWED_HOSTS });
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
+
+// OAuth (publico: discovery, DCR, /authorize, callback Google, /token).
+// So registra se tem o flow completo configurado.
+if (OAUTH_FLOW_READY) {
+  registerOAuthRoutes(app);
+}
 
 app.post("/mcp", requireAuth, async (req, res) => {
   const identity = req.identity!;
@@ -76,9 +96,9 @@ app.listen(PORT, HOST, (err?: Error) => {
   }
   console.error(`mcp-portabilidade ouvindo em http://${HOST}:${PORT}/mcp`);
   console.error(
-    `Auth: ${[HAS_JWT && "JWT/OAuth", HAS_STATIC && "bearer estatico"]
+    `Auth: ${[HAS_JWT && "JWT", HAS_STATIC && "bearer estatico"]
       .filter(Boolean)
-      .join(" + ")}`,
+      .join(" + ")}` + (OAUTH_FLOW_READY ? " (OAuth flow ativo)" : ""),
   );
 });
 
