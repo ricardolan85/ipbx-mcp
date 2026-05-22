@@ -9,14 +9,17 @@ export function createServer(identity: AuthIdentity): McpServer {
     version: "0.1.0",
   });
 
-  server.tool(
+  server.registerTool(
     "consultar-portabilidade",
-    "Consulta status de portabilidade de um número via API da provedora.",
     {
-      numero: z
-        .string()
-        .regex(/^\d{10,13}$/)
-        .describe("Número apenas com dígitos (DDI+DDD+assinante), ex: 553534733100"),
+      description:
+        "Consulta status de portabilidade de um número via API da provedora.",
+      inputSchema: {
+        numero: z
+          .string()
+          .regex(/^\d{10,13}$/)
+          .describe("Número apenas com dígitos (DDI+DDD+assinante), ex: 553534733100"),
+      },
     },
     async ({ numero }) => {
       const start = Date.now();
