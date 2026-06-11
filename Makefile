@@ -11,7 +11,7 @@ build:
 	docker image build . -t resend-mcp:$(VERSION)
 
 run:
-	docker container run -d --env-file .env -p 50002:3000 -v resend_data:/data --name resend-mcp resend-mcp:$(VERSION)
+	docker container run -d --env-file .env -p 50007:3000 -v resend_data:/data --name resend-mcp resend-mcp:$(VERSION)
 
 stop:
 	docker stop resend-mcp 2>/dev/null || true

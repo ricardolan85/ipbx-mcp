@@ -29,7 +29,7 @@ URL pública canônica: `https://mcp.resend.vivavox.com.br`.
   `191.252.178.174` (compartilhado pelos MCPs `*.vivavox.com.br`).
   Termina TLS com Let's Encrypt.
 - **Backend Node:** host:porta internos do container `resend-mcp`
-  (Makefile mapeia `50002:3000`). NPM faz `proxy_pass` direto —
+  (Makefile mapeia `50007:3000`). NPM faz `proxy_pass` direto —
   subdomínio mapeia pra raiz, sem reescrita de path. Confirme o
   host:porta do deploy do Resend (herdado do scaffold).
 - **Streamable HTTP no NPM:** a aba Advanced do Proxy Host precisa de
@@ -203,7 +203,7 @@ Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
 como volume pro SQLite, healthcheck no `/health`. Orquestração via
 `Makefile` — `docker run` direto com `--env-file .env`, volume
-nomeado `resend_data:/data` e mapeamento `50002:3000`.
+nomeado `resend_data:/data` e mapeamento `50007:3000`.
 
 ```bash
 make build     # docker image build
