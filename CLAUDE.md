@@ -5,18 +5,18 @@ Guia para o Claude Code ao trabalhar neste repositório.
 ## Visão geral
 
 Servidor MCP em TypeScript (módulo ESM, transporte **Streamable HTTP**
-em modo stateless) que expõe tools para consultar dados de portabilidade
-via uma **API HTTP interna da provedora** (autenticada por `x-api-key`).
-O servidor é uma camada fina de validação, formatação e autenticação
-de usuários — toda a lógica de domínio mora na API upstream.
+em modo stateless) que expõe tools para enviar email transacional
+via **Resend** (SDK oficial, autenticado por `RESEND_API_KEY`).
+O servidor é uma camada fina de validação, autenticação de usuários
+e auditoria — o envio em si é delegado ao Resend.
 
-URL pública canônica: `https://mcp.portabilidade.vivavox.com.br`.
+URL pública canônica: `https://mcp.resend.vivavox.com.br`.
 
 ## Stack
 
 - `@modelcontextprotocol/sdk` — `McpServer` + `StreamableHTTPServerTransport`
   + `createMcpExpressApp` (Express embutido no SDK)
-- `fetch` nativo do Node — cliente da API de portabilidade
+- `resend` — SDK oficial, cliente de envio de email
 - `better-sqlite3` — persistência local (OAuth + audit)
 - `jose` — assinatura/validação de JWTs
 - `zod` — schemas de input das tools
@@ -24,14 +24,14 @@ URL pública canônica: `https://mcp.portabilidade.vivavox.com.br`.
 
 ## Infra de produção
 
-- **URL canônica:** `https://mcp.portabilidade.vivavox.com.br`
-- **URL legada** (em migração — derruba quando todos os clientes
-  trocarem): `https://mcp.vivavox.com.br/portabilidade`
+- **URL canônica:** `https://mcp.resend.vivavox.com.br`
 - **Reverse proxy:** Nginx Proxy Manager em Docker, IP público
-  `191.252.178.174`. Termina TLS com Let's Encrypt.
-- **Backend Node:** `138.94.55.156:3000` (rede interna). NPM faz
-  `proxy_pass` direto — subdomínio mapeia pra raiz, sem reescrita
-  de path.
+  `191.252.178.174` (compartilhado pelos MCPs `*.vivavox.com.br`).
+  Termina TLS com Let's Encrypt.
+- **Backend Node:** host:porta internos do container `resend-mcp`
+  (Makefile mapeia `50002:3000`). NPM faz `proxy_pass` direto —
+  subdomínio mapeia pra raiz, sem reescrita de path. Confirme o
+  host:porta do deploy do Resend (herdado do scaffold).
 - **Streamable HTTP no NPM:** a aba Advanced do Proxy Host precisa de
   `proxy_buffering off; proxy_read_timeout 24h; proxy_send_timeout 24h;`.
   O resto (`Connection`, `Upgrade`, `proxy_http_version`) o template
@@ -50,10 +50,10 @@ URL pública canônica: `https://mcp.portabilidade.vivavox.com.br`.
 - `src/server.ts` — `createServer()` instancia o `McpServer` e registra
   cada tool. Chamado **uma vez por requisição** (modo stateless), então
   evite estado mutável no escopo do módulo.
-- `src/portabilidade.ts` — cliente HTTP da API da provedora. Lê
-  `PORTABILIDADE_API_URL` e `PORTABILIDADE_API_KEY` por chamada. Toda
-  nova consulta à API deve virar uma função tipada aqui, não `fetch`
-  solto na tool.
+- `src/resend.ts` — cliente de envio via SDK oficial do Resend
+  (singleton lazy). Lê `RESEND_API_KEY` e `RESEND_FROM` sob demanda.
+  Todo novo uso da API do Resend deve virar uma função tipada aqui,
+  não chamar o SDK solto na tool.
 - `src/sqlite.ts` — `getDb()` lazy. Abre `SQLITE_PATH` (default
   `./data/app.db`), aplica pragmas (`journal_mode=WAL`,
   `foreign_keys=ON`) e roda todos os `sql/*.sql` em ordem alfabética
@@ -131,17 +131,18 @@ camada de aplicação.
 ## Convenções
 
 - Variáveis lidas no bootstrap (`src/index.ts`, fail-fast):
-  `PORTABILIDADE_API_URL`, `PORTABILIDADE_API_KEY`, e pelo menos um
-  caminho de auth (`MCP_AUTH_TOKEN` ou `OAUTH_JWT_SECRET +
-  OAUTH_ISSUER`). Transporte: `PORT`, `HOST`, `MCP_ALLOWED_HOSTS`.
-- Variáveis lidas sob demanda: a chave da API é relida em cada
-  chamada de `consultarPortabilidade()`; envs do Google (`GOOGLE_*`,
-  `ALLOWED_GOOGLE_HD`) são lidas dentro do código OAuth e lançam
-  erro se ausentes na primeira chamada.
+  `RESEND_API_KEY`, e pelo menos um caminho de auth (`MCP_AUTH_TOKEN`
+  ou `OAUTH_JWT_SECRET + OAUTH_ISSUER`). Transporte: `PORT`, `HOST`,
+  `MCP_ALLOWED_HOSTS`.
+- Variáveis lidas sob demanda: o cliente Resend é inicializado lazy a
+  partir de `RESEND_API_KEY` e `RESEND_FROM` é lido por envio; envs do
+  Google (`GOOGLE_*`, `ALLOWED_GOOGLE_HD`) são lidas dentro do código
+  OAuth e lançam erro se ausentes na primeira chamada.
 - Tools devem capturar erros e devolver `{ isError: true, content: [...] }`
   em vez de deixar a exceção propagar pro transporte.
-- Validação de input via `zod` é obrigatória — o número é normalizado
-  para apenas dígitos (regex `/^\d{10,13}$/`).
+- Validação de input via `zod` é obrigatória — emails passam por
+  `z.string().email()` (campos `to`/`cc`/`bcc`/`replyTo` aceitam string
+  única ou array).
 - O retorno padrão de uma tool é um único bloco `text` com JSON
   `JSON.stringify(obj, null, 2)`.
 - Logs em `console.error` (vai pro stderr/journald). `console.log` está
@@ -151,22 +152,23 @@ camada de aplicação.
   chamador (`user_email` quando JWT, `auth_kind='service'` e
   `user_email='service:static'` quando bearer estático).
 
-## API de portabilidade (provedora)
+## API do Resend
 
-- **Base URL:** `PORTABILIDADE_API_URL` (interno, ex:
-  `http://138.94.55.156:50500`).
-- **Auth:** header `x-api-key: $PORTABILIDADE_API_KEY` (chave estática
-  fornecida pela provedora).
-- **Endpoint:** `GET {URL}/portabilidade/{numero}` — sempre 200.
-- **Resposta:**
-  ```json
-  {"numero":"553534733100","encontrado":true,"idoperadora":55282,"cio":1,"portado":true}
-  ```
-  Quando `encontrado: false`, os demais campos podem vir ausentes.
-- **Migração:** o MySQL com SP `consultaTN` foi descontinuado pela
-  provedora em mai/2026. A API substitui inclusive o lookup local
-  de nome de operadora — `data/idoperadora.txt` foi removido junto
-  com `src/operadoras.ts`.
+- **Cliente:** SDK oficial `resend` (`new Resend(RESEND_API_KEY)`),
+  singleton lazy em `src/resend.ts`.
+- **Auth:** `RESEND_API_KEY` (Bearer, criada em resend.com/api-keys).
+- **Envio:** `resend.emails.send({ from, to, subject, html|text, ... })`
+  retorna `{ data, error }`. `sendEmail()` lança em `error` e devolve
+  `{ id }` no sucesso.
+- **Remetente:** `from` da tool ou `RESEND_FROM` default. Precisa
+  pertencer a um domínio verificado no Resend.
+- **Corpo:** ao menos um de `html`/`text` é obrigatório (validado em
+  `sendEmail()`).
+- **Agendamento:** `scheduledAt` aceita ISO 8601 ou linguagem natural
+  ("in 1 hour").
+- **Tools:** hoje só `send-email`. Novas capacidades (batch, domínios,
+  contatos/audiences) entram como funções tipadas em `src/resend.ts`
+  + tool em `src/server.ts`.
 
 ## Persistência local (SQLite)
 
@@ -201,20 +203,20 @@ Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
 como volume pro SQLite, healthcheck no `/health`. Orquestração via
 `Makefile` — `docker run` direto com `--env-file .env`, volume
-nomeado `portabilidade_data:/data` e mapeamento `50002:3000`.
+nomeado `resend_data:/data` e mapeamento `50002:3000`.
 
 ```bash
 make build     # docker image build
 make run       # docker container run (detached)
 make stop      # docker stop + rm
 make update    # git pull + build + stop + run
-docker logs -f portabilidade-mcp
+docker logs -f resend-mcp
 ```
 
 Backup do SQLite:
 
 ```bash
-docker run --rm -v portabilidade_data:/data -v $PWD:/backup \
+docker run --rm -v resend_data:/data -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
 
@@ -258,9 +260,12 @@ curl -s -X POST http://localhost:3000/mcp \
 - Não aceitar login com email fora de `@vivavox.com.br`. Restrição da
   liderança. Valida o claim `hd` no callback do Google **mesmo** com
   consent screen Internal (defesa em profundidade).
-- Não voltar pra URL subpath (`mcp.vivavox.com.br/portabilidade`):
+- Não voltar pra URL subpath (`mcp.vivavox.com.br/resend`):
   spec OAuth do MCP exige well-known na raiz do host. Subdomínio por
   MCP é a forma certa.
+- Não gravar o corpo do email (`html`/`text`) no `audit_log` — só
+  metadado de roteamento (`from`/`to`/`subject`/`scheduledAt`). Evita
+  PII no banco local.
 - Não persistir access tokens (JWTs) no banco — são stateless e
   validados por assinatura. Só refresh tokens (opacos) vão pra
   `oauth_refresh_tokens`.

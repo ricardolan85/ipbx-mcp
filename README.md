@@ -1,13 +1,13 @@
-# portabilidade-mcp
+# resend-mcp
 
-Servidor [MCP](https://modelcontextprotocol.io) em TypeScript que expõe consultas de portabilidade de números telefônicos via uma API HTTP interna da provedora. Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log).
+Servidor [MCP](https://modelcontextprotocol.io) em TypeScript que expõe envio de email transacional via [Resend](https://resend.com). Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log).
 
-URL pública em produção: `https://mcp.portabilidade.vivavox.com.br`.
+URL pública em produção: `https://mcp.resend.vivavox.com.br`.
 
 ## Requisitos
 
 - Node.js **>= 22** (`better-sqlite3` v12 precisa)
-- Acesso à API de portabilidade da provedora (URL interna + `x-api-key`)
+- Conta no [Resend](https://resend.com) com API key e um domínio verificado
 - Para OAuth: OAuth Client no Google Cloud Console em modo **Internal**
 
 ## Instalação
@@ -26,8 +26,7 @@ Carregue o `.env` no processo (systemd `EnvironmentFile=`, docker `env_file:`, o
 
 | Variável                  | Descrição                                                       |
 | ------------------------- | --------------------------------------------------------------- |
-| `PORTABILIDADE_API_URL`   | Base da API da provedora (ex: `http://138.94.55.156:50500`)     |
-| `PORTABILIDADE_API_KEY`   | Chave da API (header `x-api-key`)                               |
+| `RESEND_API_KEY`          | Chave da API do Resend (criada em resend.com/api-keys)          |
 
 E **pelo menos um** dos caminhos de auth:
 
@@ -40,7 +39,7 @@ E **pelo menos um** dos caminhos de auth:
 
 | Variável                | Descrição                                                                 |
 | ----------------------- | ------------------------------------------------------------------------- |
-| `OAUTH_ISSUER`          | URL canônica do servidor (ex: `https://mcp.portabilidade.vivavox.com.br`) |
+| `OAUTH_ISSUER`          | URL canônica do servidor (ex: `https://mcp.resend.vivavox.com.br`)        |
 | `OAUTH_JWT_SECRET`      | Chave HS256 dos JWTs (32 bytes hex)                                       |
 | `GOOGLE_CLIENT_ID`      | Do OAuth Client no Google Cloud Console                                   |
 | `GOOGLE_CLIENT_SECRET`  | Do OAuth Client no Google Cloud Console                                   |
@@ -56,6 +55,7 @@ Quando todas estão presentes, as rotas `/authorize`, `/oauth/google/callback`, 
 | `HOST`               | `0.0.0.0`      | Interface (use `127.0.0.1` em dev local)        |
 | `MCP_ALLOWED_HOSTS`  | —              | Lista CSV de hosts aceitos no header `Host`     |
 | `SQLITE_PATH`        | `./data/app.db`| Caminho do arquivo SQLite                       |
+| `RESEND_FROM`        | —              | Remetente padrão quando a tool omite `from` (domínio verificado) |
 
 Gere tokens aleatórios com:
 
@@ -82,27 +82,29 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Tools disponíveis
 
-### `consultar-portabilidade`
+### `send-email`
 
-Consulta o status de portabilidade de um número via API da provedora.
+Envia um email transacional via Resend.
 
 **Parâmetros:**
 
-- `numero` (string, obrigatório): apenas dígitos, 10–13 chars, ex: `553534733100`
+- `to` (string | string[], obrigatório): destinatário(s)
+- `subject` (string, obrigatório): assunto
+- `html` e/ou `text` (string): corpo — ao menos um obrigatório
+- `from` (string, opcional): remetente; omitido usa `RESEND_FROM`
+- `cc`, `bcc`, `replyTo` (string | string[], opcionais)
+- `scheduledAt` (string, opcional): ISO 8601 ou linguagem natural (`in 1 hour`)
 
 **Retorno:**
 
 ```json
 {
-  "numero": "553534733100",
-  "idoperadora": 55282,
-  "operadora": "ANDRADE & LANDIM TELECOMUNICAÇÕES LTDA",
-  "CIO": 1,
-  "IsPortado": true
+  "id": "49a3999c-0ce1-4ea6-ab68-afcd6dc2e794",
+  "status": "enviado"
 }
 ```
 
-Toda chamada vai pro `audit_log` com identidade do chamador (email Google se JWT, `service:static` se bearer estático).
+Só metadado de roteamento (`from`/`to`/`subject`/`scheduledAt`) vai pro `audit_log` — nunca o corpo do email. Identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 
 ## Comandos
 
@@ -142,7 +144,7 @@ Backup do SQLite:
 
 ```bash
 docker run --rm \
-  -v portabilidade_data:/data \
+  -v resend_data:/data \
   -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
@@ -151,14 +153,14 @@ docker run --rm \
 
 ```ini
 [Unit]
-Description=portabilidade-mcp
+Description=resend-mcp
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/var/local/portabilidade-mcp
+WorkingDirectory=/var/local/resend-mcp
 ExecStart=/usr/bin/node dist/index.js
-EnvironmentFile=/var/local/portabilidade-mcp/.env
+EnvironmentFile=/var/local/resend-mcp/.env
 User=mcp
 Restart=on-failure
 RestartSec=10
@@ -176,9 +178,9 @@ WantedBy=multi-user.target
 ```json
 {
   "mcpServers": {
-    "portabilidade": {
+    "resend": {
       "type": "http",
-      "url": "https://mcp.portabilidade.vivavox.com.br/mcp",
+      "url": "https://mcp.resend.vivavox.com.br/mcp",
       "headers": {
         "Authorization": "Bearer SEU_MCP_AUTH_TOKEN"
       }
@@ -189,7 +191,7 @@ WantedBy=multi-user.target
 
 ### claude.ai (OAuth)
 
-Adicionar como Custom Connector usando `https://mcp.portabilidade.vivavox.com.br/mcp`. O flow OAuth dispara automaticamente — claude.ai descobre o AS via `WWW-Authenticate`, registra um client via DCR, redireciona pro Google, recebe o code e troca por um access token.
+Adicionar como Custom Connector usando `https://mcp.resend.vivavox.com.br/mcp`. O flow OAuth dispara automaticamente — claude.ai descobre o AS via `WWW-Authenticate`, registra um client via DCR, redireciona pro Google, recebe o code e troca por um access token.
 
 ## Estrutura
 
@@ -197,7 +199,7 @@ Adicionar como Custom Connector usando `https://mcp.portabilidade.vivavox.com.br
 src/
   index.ts            # bootstrap HTTP, leitura de env, registro de rotas
   server.ts           # createServer() registra as tools
-  portabilidade.ts    # cliente fetch da API da provedora
+  resend.ts           # cliente de envio via SDK oficial do Resend
   sqlite.ts           # better-sqlite3 + apply schemas
   audit.ts            # logToolCall() -> audit_log
   auth/

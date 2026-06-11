@@ -44,11 +44,9 @@ const ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS
   ? process.env.MCP_ALLOWED_HOSTS.split(",").map((s) => s.trim()).filter(Boolean)
   : undefined;
 
-// API de portabilidade e obrigatoria - e a unica fonte de dados das tools.
-if (!process.env.PORTABILIDADE_API_URL || !process.env.PORTABILIDADE_API_KEY) {
-  console.error(
-    "PORTABILIDADE_API_URL e PORTABILIDADE_API_KEY sao obrigatorias.",
-  );
+// Resend e obrigatorio - e o backend de envio das tools.
+if (!process.env.RESEND_API_KEY) {
+  console.error("RESEND_API_KEY e obrigatoria.");
   process.exit(1);
 }
 
@@ -133,7 +131,7 @@ app.listen(PORT, HOST, (err?: Error) => {
     console.error("Falha ao iniciar:", err);
     process.exit(1);
   }
-  console.error(`mcp-portabilidade ouvindo em http://${HOST}:${PORT}/mcp`);
+  console.error(`mcp-resend ouvindo em http://${HOST}:${PORT}/mcp`);
   console.error(
     `Auth: ${[HAS_JWT && "JWT", HAS_STATIC && "bearer estatico"]
       .filter(Boolean)

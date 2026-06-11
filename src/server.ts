@@ -1,73 +1,91 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { consultarPortabilidade } from "./portabilidade.js";
+import { sendEmail } from "./resend.js";
 import { logToolCall, type AuthIdentity } from "./audit.js";
 
 export function createServer(identity: AuthIdentity): McpServer {
   const server = new McpServer({
-    name: "mcp-portabilidade",
+    name: "mcp-resend",
     version: "0.1.0",
   });
 
+  // Um ou mais emails. Aceita string unica ou array (Resend permite ate 50).
+  const emailList = z.union([
+    z.string().email(),
+    z.array(z.string().email()).min(1),
+  ]);
+
   server.registerTool(
-    "consultar-portabilidade",
+    "send-email",
     {
       description:
-        "Consulta status de portabilidade de um número via API da provedora.",
+        "Envia um email transacional via Resend. Informe ao menos 'html' ou " +
+        "'text'. Se 'from' for omitido, usa RESEND_FROM do ambiente.",
       inputSchema: {
-        numero: z
+        from: z
           .string()
-          .regex(/^\d{10,13}$/)
-          .describe("Número apenas com dígitos (DDI+DDD+assinante), ex: 553534733100"),
+          .optional()
+          .describe(
+            "Remetente, ex: 'Vivavox <no-reply@vivavox.com.br>'. Omitido usa RESEND_FROM.",
+          ),
+        to: emailList.describe("Destinatario(s). String ou array de emails (ate 50)."),
+        subject: z.string().min(1).describe("Assunto do email."),
+        html: z.string().optional().describe("Corpo em HTML."),
+        text: z.string().optional().describe("Corpo em texto puro."),
+        cc: emailList.optional().describe("Copia (cc)."),
+        bcc: emailList.optional().describe("Copia oculta (bcc)."),
+        replyTo: emailList.optional().describe("Endereco(s) de reply-to."),
+        scheduledAt: z
+          .string()
+          .optional()
+          .describe("Agendamento: ISO 8601 ou linguagem natural ('in 1 hour')."),
       },
     },
-    async ({ numero }) => {
+    async (input) => {
       const start = Date.now();
+      // No audit so vai metadado de roteamento - nunca o corpo do email (PII).
+      const auditArgs = {
+        from: input.from,
+        to: input.to,
+        subject: input.subject,
+        scheduledAt: input.scheduledAt,
+      };
       try {
-        const row = await consultarPortabilidade(numero);
-        const result = row
-          ? {
-              numero,
-              idoperadora: row.idoperadora,
-              operadora: row.operadora,
-              CIO: row.cio,
-              IsPortado: row.portado,
-            }
-          : null;
+        const { id } = await sendEmail(input);
 
         logToolCall({
           identity,
-          tool: "consultar-portabilidade",
-          args: { numero },
+          tool: "send-email",
+          args: auditArgs,
           resultOk: true,
           durationMs: Date.now() - start,
         });
 
-        if (!result) {
-          return {
-            content: [
-              { type: "text", text: `Nenhum resultado para ${numero}.` },
-            ],
-          };
-        }
         return {
           content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
+            {
+              type: "text",
+              text: JSON.stringify(
+                { id, status: input.scheduledAt ? "agendado" : "enviado" },
+                null,
+                2,
+              ),
+            },
           ],
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logToolCall({
           identity,
-          tool: "consultar-portabilidade",
-          args: { numero },
+          tool: "send-email",
+          args: auditArgs,
           resultOk: false,
           errorMessage: msg,
           durationMs: Date.now() - start,
         });
         return {
           isError: true,
-          content: [{ type: "text", text: `Erro na consulta: ${msg}` }],
+          content: [{ type: "text", text: `Erro ao enviar email: ${msg}` }],
         };
       }
     },
