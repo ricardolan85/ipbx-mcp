@@ -30,7 +30,7 @@ function unauthorized(res: Response): void {
       `Bearer realm="${issuer}", resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
     );
   } else {
-    res.setHeader("WWW-Authenticate", `Bearer realm="mcp-resend"`);
+    res.setHeader("WWW-Authenticate", `Bearer realm="mcp-base"`);
   }
   res.status(401).json({
     jsonrpc: "2.0",

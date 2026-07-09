@@ -1,4 +1,4 @@
--- Schema OAuth + audit log para mcp-resend (SQLite)
+-- Schema OAuth + audit log para mcp-base (SQLite)
 --
 -- Engine: SQLite. Arquivo apontado por SQLITE_PATH no .env (default
 -- ./data/app.db local, /data/app.db em prod via volume Docker).

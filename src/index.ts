@@ -44,12 +44,6 @@ const ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS
   ? process.env.MCP_ALLOWED_HOSTS.split(",").map((s) => s.trim()).filter(Boolean)
   : undefined;
 
-// Resend e obrigatorio - e o backend de envio das tools.
-if (!process.env.RESEND_API_KEY) {
-  console.error("RESEND_API_KEY e obrigatoria.");
-  process.exit(1);
-}
-
 // Pelo menos um caminho de auth precisa estar configurado.
 const HAS_STATIC = Boolean(process.env.MCP_AUTH_TOKEN);
 const HAS_JWT = Boolean(process.env.OAUTH_JWT_SECRET && process.env.OAUTH_ISSUER);
@@ -131,7 +125,7 @@ app.listen(PORT, HOST, (err?: Error) => {
     console.error("Falha ao iniciar:", err);
     process.exit(1);
   }
-  console.error(`mcp-resend ouvindo em http://${HOST}:${PORT}/mcp`);
+  console.error(`mcp-base ouvindo em http://${HOST}:${PORT}/mcp`);
   console.error(
     `Auth: ${[HAS_JWT && "JWT", HAS_STATIC && "bearer estatico"]
       .filter(Boolean)

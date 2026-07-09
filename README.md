@@ -1,13 +1,12 @@
-# resend-mcp
+# base-mcp
 
-Servidor [MCP](https://modelcontextprotocol.io) em TypeScript que expõe envio de email transacional via [Resend](https://resend.com). Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log).
+Servidor [MCP](https://modelcontextprotocol.io) base em TypeScript. Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log). Expõe uma tool `ping` de exemplo — use como scaffold para novos MCPs.
 
-URL pública em produção: `https://mcp.resend.vivavox.com.br`.
+URL pública em produção: `https://mcp.base.vivavox.com.br`.
 
 ## Requisitos
 
 - Node.js **>= 22** (`better-sqlite3` v12 precisa)
-- Conta no [Resend](https://resend.com) com API key e um domínio verificado
 - Para OAuth: OAuth Client no Google Cloud Console em modo **Internal**
 
 ## Instalação
@@ -24,11 +23,7 @@ Carregue o `.env` no processo (systemd `EnvironmentFile=`, docker `env_file:`, o
 
 ### Obrigatórias
 
-| Variável                  | Descrição                                                       |
-| ------------------------- | --------------------------------------------------------------- |
-| `RESEND_API_KEY`          | Chave da API do Resend (criada em resend.com/api-keys)          |
-
-E **pelo menos um** dos caminhos de auth:
+**Pelo menos um** dos caminhos de auth:
 
 | Variável            | Quando usar                                                              |
 | ------------------- | ------------------------------------------------------------------------ |
@@ -39,7 +34,7 @@ E **pelo menos um** dos caminhos de auth:
 
 | Variável                | Descrição                                                                 |
 | ----------------------- | ------------------------------------------------------------------------- |
-| `OAUTH_ISSUER`          | URL canônica do servidor (ex: `https://mcp.resend.vivavox.com.br`)        |
+| `OAUTH_ISSUER`          | URL canônica do servidor (ex: `https://mcp.base.vivavox.com.br`)          |
 | `OAUTH_JWT_SECRET`      | Chave HS256 dos JWTs (32 bytes hex)                                       |
 | `GOOGLE_CLIENT_ID`      | Do OAuth Client no Google Cloud Console                                   |
 | `GOOGLE_CLIENT_SECRET`  | Do OAuth Client no Google Cloud Console                                   |
@@ -55,7 +50,6 @@ Quando todas estão presentes, as rotas `/authorize`, `/oauth/google/callback`, 
 | `HOST`               | `0.0.0.0`      | Interface (use `127.0.0.1` em dev local)        |
 | `MCP_ALLOWED_HOSTS`  | —              | Lista CSV de hosts aceitos no header `Host`     |
 | `SQLITE_PATH`        | `./data/app.db`| Caminho do arquivo SQLite                       |
-| `RESEND_FROM`        | —              | Remetente padrão quando a tool omite `from` (domínio verificado) |
 
 Gere tokens aleatórios com:
 
@@ -82,29 +76,24 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Tools disponíveis
 
-### `send-email`
+### `ping`
 
-Envia um email transacional via Resend.
+Health check simples de exemplo: responde `pong`.
 
 **Parâmetros:**
 
-- `to` (string | string[], obrigatório): destinatário(s)
-- `subject` (string, obrigatório): assunto
-- `html` e/ou `text` (string): corpo — ao menos um obrigatório
-- `from` (string, opcional): remetente; omitido usa `RESEND_FROM`
-- `cc`, `bcc`, `replyTo` (string | string[], opcionais)
-- `scheduledAt` (string, opcional): ISO 8601 ou linguagem natural (`in 1 hour`)
+- `message` (string, opcional): mensagem ecoada de volta na resposta
 
 **Retorno:**
 
 ```json
 {
-  "id": "49a3999c-0ce1-4ea6-ab68-afcd6dc2e794",
-  "status": "enviado"
+  "pong": true,
+  "message": null
 }
 ```
 
-Só metadado de roteamento (`from`/`to`/`subject`/`scheduledAt`) vai pro `audit_log` — nunca o corpo do email. Identidade do chamador: email Google se JWT, `service:static` se bearer estático.
+Toda chamada gera uma linha em `audit_log` com a identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 
 ## Comandos
 
@@ -132,19 +121,21 @@ curl -s -X POST http://localhost:3000/mcp \
 
 ### Docker (recomendado)
 
-`Dockerfile` multi-stage (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data` como volume pro SQLite, healthcheck via `/health`. `docker-compose.yml` orquestra com `env_file: .env`.
+`Dockerfile` multi-stage (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data` como volume pro SQLite, healthcheck via `/health`. Orquestração via `Makefile` (`docker run` direto com `--env-file .env`).
 
 ```bash
-docker compose build
-docker compose up -d
-docker compose logs -f
+make build     # docker image build
+make run       # docker container run (detached)
+make stop      # docker stop + rm
+make update    # git pull + build + stop + run
+docker logs -f base-mcp
 ```
 
 Backup do SQLite:
 
 ```bash
 docker run --rm \
-  -v resend_data:/data \
+  -v base_data:/data \
   -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
@@ -153,14 +144,14 @@ docker run --rm \
 
 ```ini
 [Unit]
-Description=resend-mcp
+Description=base-mcp
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/var/local/resend-mcp
+WorkingDirectory=/var/local/base-mcp
 ExecStart=/usr/bin/node dist/index.js
-EnvironmentFile=/var/local/resend-mcp/.env
+EnvironmentFile=/var/local/base-mcp/.env
 User=mcp
 Restart=on-failure
 RestartSec=10
@@ -178,9 +169,9 @@ WantedBy=multi-user.target
 ```json
 {
   "mcpServers": {
-    "resend": {
+    "base": {
       "type": "http",
-      "url": "https://mcp.resend.vivavox.com.br/mcp",
+      "url": "https://mcp.base.vivavox.com.br/mcp",
       "headers": {
         "Authorization": "Bearer SEU_MCP_AUTH_TOKEN"
       }
@@ -191,15 +182,14 @@ WantedBy=multi-user.target
 
 ### claude.ai (OAuth)
 
-Adicionar como Custom Connector usando `https://mcp.resend.vivavox.com.br/mcp`. O flow OAuth dispara automaticamente — claude.ai descobre o AS via `WWW-Authenticate`, registra um client via DCR, redireciona pro Google, recebe o code e troca por um access token.
+Adicionar como Custom Connector usando `https://mcp.base.vivavox.com.br/mcp`. O flow OAuth dispara automaticamente — claude.ai descobre o AS via `WWW-Authenticate`, registra um client via DCR, redireciona pro Google, recebe o code e troca por um access token.
 
 ## Estrutura
 
 ```
 src/
   index.ts            # bootstrap HTTP, leitura de env, registro de rotas
-  server.ts           # createServer() registra as tools
-  resend.ts           # cliente de envio via SDK oficial do Resend
+  server.ts           # createServer() registra as tools (ping)
   sqlite.ts           # better-sqlite3 + apply schemas
   audit.ts            # logToolCall() -> audit_log
   auth/
@@ -214,5 +204,5 @@ sql/
   001_oauth_schema.sql           # oauth_clients, oauth_codes, oauth_refresh_tokens, audit_log
   002_oauth_authorize_tx.sql     # oauth_authorize_tx (state Google <-> params)
 Dockerfile
-docker-compose.yml
+Makefile
 ```

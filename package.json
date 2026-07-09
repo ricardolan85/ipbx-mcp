@@ -1,10 +1,10 @@
 {
-  "name": "resend-mcp",
+  "name": "base-mcp",
   "version": "0.1.0",
-  "description": "MCP server para envio de email via Resend",
+  "description": "MCP server base (Streamable HTTP + OAuth/bearer + SQLite audit)",
   "type": "module",
   "bin": {
-    "resend-mcp": "dist/index.js"
+    "base-mcp": "dist/index.js"
   },
   "files": [
     "dist"
@@ -21,7 +21,6 @@
     "better-sqlite3": "^12.10.0",
     "express": "^5.0.0",
     "jose": "^6.2.3",
-    "resend": "^6.12.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {

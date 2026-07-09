@@ -4,19 +4,18 @@ Guia para o Claude Code ao trabalhar neste repositório.
 
 ## Visão geral
 
-Servidor MCP em TypeScript (módulo ESM, transporte **Streamable HTTP**
-em modo stateless) que expõe tools para enviar email transacional
-via **Resend** (SDK oficial, autenticado por `RESEND_API_KEY`).
-O servidor é uma camada fina de validação, autenticação de usuários
-e auditoria — o envio em si é delegado ao Resend.
+Servidor MCP base em TypeScript (módulo ESM, transporte **Streamable HTTP**
+em modo stateless). É um scaffold: expõe uma tool `ping` de exemplo e
+concentra o valor na infra reaproveitável — validação de input,
+autenticação de usuários (bearer estático + OAuth) e auditoria. Novas
+capacidades entram como tools tipadas em `src/server.ts`.
 
-URL pública canônica: `https://mcp.resend.vivavox.com.br`.
+URL pública canônica: `https://mcp.base.vivavox.com.br`.
 
 ## Stack
 
 - `@modelcontextprotocol/sdk` — `McpServer` + `StreamableHTTPServerTransport`
   + `createMcpExpressApp` (Express embutido no SDK)
-- `resend` — SDK oficial, cliente de envio de email
 - `better-sqlite3` — persistência local (OAuth + audit)
 - `jose` — assinatura/validação de JWTs
 - `zod` — schemas de input das tools
@@ -24,14 +23,13 @@ URL pública canônica: `https://mcp.resend.vivavox.com.br`.
 
 ## Infra de produção
 
-- **URL canônica:** `https://mcp.resend.vivavox.com.br`
+- **URL canônica:** `https://mcp.base.vivavox.com.br`
 - **Reverse proxy:** Nginx Proxy Manager em Docker, IP público
   `191.252.178.174` (compartilhado pelos MCPs `*.vivavox.com.br`).
   Termina TLS com Let's Encrypt.
-- **Backend Node:** host:porta internos do container `resend-mcp`
+- **Backend Node:** host:porta internos do container `base-mcp`
   (Makefile mapeia `50007:3000`). NPM faz `proxy_pass` direto —
-  subdomínio mapeia pra raiz, sem reescrita de path. Confirme o
-  host:porta do deploy do Resend (herdado do scaffold).
+  subdomínio mapeia pra raiz, sem reescrita de path.
 - **Streamable HTTP no NPM:** a aba Advanced do Proxy Host precisa de
   `proxy_buffering off; proxy_read_timeout 24h; proxy_send_timeout 24h;`.
   O resto (`Connection`, `Upgrade`, `proxy_http_version`) o template
@@ -50,10 +48,6 @@ URL pública canônica: `https://mcp.resend.vivavox.com.br`.
 - `src/server.ts` — `createServer()` instancia o `McpServer` e registra
   cada tool. Chamado **uma vez por requisição** (modo stateless), então
   evite estado mutável no escopo do módulo.
-- `src/resend.ts` — cliente de envio via SDK oficial do Resend
-  (singleton lazy). Lê `RESEND_API_KEY` e `RESEND_FROM` sob demanda.
-  Todo novo uso da API do Resend deve virar uma função tipada aqui,
-  não chamar o SDK solto na tool.
 - `src/sqlite.ts` — `getDb()` lazy. Abre `SQLITE_PATH` (default
   `./data/app.db`), aplica pragmas (`journal_mode=WAL`,
   `foreign_keys=ON`) e roda todos os `sql/*.sql` em ordem alfabética
@@ -130,19 +124,15 @@ camada de aplicação.
 
 ## Convenções
 
-- Variáveis lidas no bootstrap (`src/index.ts`, fail-fast):
-  `RESEND_API_KEY`, e pelo menos um caminho de auth (`MCP_AUTH_TOKEN`
-  ou `OAUTH_JWT_SECRET + OAUTH_ISSUER`). Transporte: `PORT`, `HOST`,
-  `MCP_ALLOWED_HOSTS`.
-- Variáveis lidas sob demanda: o cliente Resend é inicializado lazy a
-  partir de `RESEND_API_KEY` e `RESEND_FROM` é lido por envio; envs do
-  Google (`GOOGLE_*`, `ALLOWED_GOOGLE_HD`) são lidas dentro do código
-  OAuth e lançam erro se ausentes na primeira chamada.
+- Variáveis lidas no bootstrap (`src/index.ts`, fail-fast): pelo menos
+  um caminho de auth (`MCP_AUTH_TOKEN` ou `OAUTH_JWT_SECRET +
+  OAUTH_ISSUER`). Transporte: `PORT`, `HOST`, `MCP_ALLOWED_HOSTS`.
+- Variáveis lidas sob demanda: envs do Google (`GOOGLE_*`,
+  `ALLOWED_GOOGLE_HD`) são lidas dentro do código OAuth e lançam erro
+  se ausentes na primeira chamada.
 - Tools devem capturar erros e devolver `{ isError: true, content: [...] }`
   em vez de deixar a exceção propagar pro transporte.
-- Validação de input via `zod` é obrigatória — emails passam por
-  `z.string().email()` (campos `to`/`cc`/`bcc`/`replyTo` aceitam string
-  única ou array).
+- Validação de input via `zod` é obrigatória para toda tool.
 - O retorno padrão de uma tool é um único bloco `text` com JSON
   `JSON.stringify(obj, null, 2)`.
 - Logs em `console.error` (vai pro stderr/journald). `console.log` está
@@ -152,23 +142,15 @@ camada de aplicação.
   chamador (`user_email` quando JWT, `auth_kind='service'` e
   `user_email='service:static'` quando bearer estático).
 
-## API do Resend
+## Tools
 
-- **Cliente:** SDK oficial `resend` (`new Resend(RESEND_API_KEY)`),
-  singleton lazy em `src/resend.ts`.
-- **Auth:** `RESEND_API_KEY` (Bearer, criada em resend.com/api-keys).
-- **Envio:** `resend.emails.send({ from, to, subject, html|text, ... })`
-  retorna `{ data, error }`. `sendEmail()` lança em `error` e devolve
-  `{ id }` no sucesso.
-- **Remetente:** `from` da tool ou `RESEND_FROM` default. Precisa
-  pertencer a um domínio verificado no Resend.
-- **Corpo:** ao menos um de `html`/`text` é obrigatório (validado em
-  `sendEmail()`).
-- **Agendamento:** `scheduledAt` aceita ISO 8601 ou linguagem natural
-  ("in 1 hour").
-- **Tools:** hoje só `send-email`. Novas capacidades (batch, domínios,
-  contatos/audiences) entram como funções tipadas em `src/resend.ts`
-  + tool em `src/server.ts`.
+- Hoje só `ping` — health check de exemplo que responde `pong` e ecoa
+  uma `message` opcional. Serve de template para novas tools.
+- Nova capacidade = uma tool em `src/server.ts` (schema `zod`,
+  captura de erro devolvendo `{ isError: true }`, chamada a
+  `logToolCall`). Integrações externas com estado/cliente próprio
+  ganham um módulo tipado dedicado em `src/` (ex: `src/<servico>.ts`),
+  em vez de chamar o SDK solto dentro da tool.
 
 ## Persistência local (SQLite)
 
@@ -203,20 +185,20 @@ Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
 como volume pro SQLite, healthcheck no `/health`. Orquestração via
 `Makefile` — `docker run` direto com `--env-file .env`, volume
-nomeado `resend_data:/data` e mapeamento `50007:3000`.
+nomeado `base_data:/data` e mapeamento `50007:3000`.
 
 ```bash
 make build     # docker image build
 make run       # docker container run (detached)
 make stop      # docker stop + rm
 make update    # git pull + build + stop + run
-docker logs -f resend-mcp
+docker logs -f base-mcp
 ```
 
 Backup do SQLite:
 
 ```bash
-docker run --rm -v resend_data:/data -v $PWD:/backup \
+docker run --rm -v base_data:/data -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
 
@@ -248,8 +230,6 @@ curl -s -X POST http://localhost:3000/mcp \
 ## O que NÃO fazer
 
 - Não commitar `.env` ou `data/` (ambos no `.gitignore`).
-- Não adicionar uma tool `ping` ou similar — o protocolo MCP já tem
-  health check no `initialize` handshake.
 - Não cachear o `McpServer` em escopo de módulo: stateless = um server
   por request.
 - Não voltar pro transporte stdio: este servidor foi planejado pra
@@ -260,12 +240,12 @@ curl -s -X POST http://localhost:3000/mcp \
 - Não aceitar login com email fora de `@vivavox.com.br`. Restrição da
   liderança. Valida o claim `hd` no callback do Google **mesmo** com
   consent screen Internal (defesa em profundidade).
-- Não voltar pra URL subpath (`mcp.vivavox.com.br/resend`):
+- Não voltar pra URL subpath (`mcp.vivavox.com.br/base`):
   spec OAuth do MCP exige well-known na raiz do host. Subdomínio por
   MCP é a forma certa.
-- Não gravar o corpo do email (`html`/`text`) no `audit_log` — só
-  metadado de roteamento (`from`/`to`/`subject`/`scheduledAt`). Evita
-  PII no banco local.
+- Não gravar payloads sensíveis / PII de tools no `audit_log` — logue
+  só o metadado necessário pra rastrear a chamada. Evita PII no banco
+  local.
 - Não persistir access tokens (JWTs) no banco — são stateless e
   validados por assinatura. Só refresh tokens (opacos) vão pra
   `oauth_refresh_tokens`.
