@@ -28,7 +28,7 @@ URL pública canônica: `https://mcp.base.vivavox.com.br`.
   `191.252.178.174` (compartilhado pelos MCPs `*.vivavox.com.br`).
   Termina TLS com Let's Encrypt.
 - **Backend Node:** host:porta internos do container `base-mcp`
-  (Makefile mapeia `50007:3000`). NPM faz `proxy_pass` direto —
+  (`docker run` mapeia `50007:3000`). NPM faz `proxy_pass` direto —
   subdomínio mapeia pra raiz, sem reescrita de path.
 - **Streamable HTTP no NPM:** a aba Advanced do Proxy Host precisa de
   `proxy_buffering off; proxy_read_timeout 24h; proxy_send_timeout 24h;`.
@@ -184,14 +184,26 @@ Schemas existentes:
 Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
 como volume pro SQLite, healthcheck no `/health`. Orquestração via
-`Makefile` — `docker run` direto com `--env-file .env`, volume
-nomeado `base_data:/data` e mapeamento `50007:3000`.
+`docker` direto: `--env-file .env`, volume nomeado `base_data:/data`
+e mapeamento `50007:3000`.
 
 ```bash
-make build     # docker image build
-make run       # docker container run (detached)
-make stop      # docker stop + rm
-make update    # git pull + build + stop + run
+# build
+docker image build . -t base-mcp:1.0
+
+# run (detached)
+docker container run -d --env-file .env -p 50007:3000 \
+  -v base_data:/data --name base-mcp base-mcp:1.0
+
+# stop + rm
+docker stop base-mcp && docker rm base-mcp
+
+# update (git pull + rebuild + restart)
+git pull && docker image build . -t base-mcp:1.0 \
+  && docker stop base-mcp && docker rm base-mcp \
+  && docker container run -d --env-file .env -p 50007:3000 \
+     -v base_data:/data --name base-mcp base-mcp:1.0
+
 docker logs -f base-mcp
 ```
 
