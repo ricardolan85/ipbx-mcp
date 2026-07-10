@@ -28,7 +28,7 @@ URL pública canônica: `https://mcp.base.vivavox.com.br`.
   `191.252.178.174` (compartilhado pelos MCPs `*.vivavox.com.br`).
   Termina TLS com Let's Encrypt.
 - **Backend Node:** host:porta internos do container `base-mcp`
-  (`docker run` mapeia `50007:3000`). NPM faz `proxy_pass` direto —
+  (deploy mapeia `50010:3000`). NPM faz `proxy_pass` direto —
   subdomínio mapeia pra raiz, sem reescrita de path.
 - **Streamable HTTP no NPM:** a aba Advanced do Proxy Host precisa de
   `proxy_buffering off; proxy_read_timeout 24h; proxy_send_timeout 24h;`.
@@ -183,26 +183,59 @@ Schemas existentes:
 
 Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
-como volume pro SQLite, healthcheck no `/health`. Orquestração via
-`docker` direto: `--env-file .env`, volume nomeado `base_data:/data`
-e mapeamento `50007:3000`.
+como volume pro SQLite, healthcheck no `/health`. A imagem é publicada
+no GHCR (`ghcr.io/<repo>`) e servida na VPS mapeando `50010:3000`.
+
+### CI/CD — `.github/workflows/deploy.yml`
+
+Deploy é automático: dispara no `push` de uma tag semver `vX.X.X`
+(pre-release tipo `v1.2.3-rc1` é ignorado pelo filtro). `concurrency`
+serializa deploys da mesma tag (sem cancelar o que está em andamento).
+Dois jobs:
+
+- **build (GHCR):** `checkout` → resolve a versão (tag `v1.2.3` →
+  `1.2.3`, usada na imagem e no deploy) → Buildx → login no GHCR com o
+  `GITHUB_TOKEN` do job → build & push com cache GHA. Tags da imagem:
+  `{version}`, `{major}.{minor}` e `latest`.
+- **deploy (VPS):** roda depois do build (`needs: build`) via
+  `appleboy/ssh-action`. Faz login efêmero no GHCR de dentro da VPS
+  (usa o `GITHUB_TOKEN` repassado, sem PAT persistido na máquina),
+  `docker pull` da imagem versionada, `cd` pro `VPS_APP_DIR` (onde
+  vive o `.env` de prod), para/remove o container antigo e sobe o novo
+  com `--env-file .env -p 50010:3000 -v base_data:/data --restart
+  unless-stopped --name base-mcp`. Depois faz logout + `image prune`
+  e fecha com health check: polling em `http://127.0.0.1:50010/health`
+  (10 tentativas, 3s cada) — se não responder, dumpa `docker logs` e
+  falha o workflow.
+
+Secrets necessários no repo (GitHub → Settings → Secrets and variables
+→ Actions):
+
+- `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` — acesso SSH à VPS.
+- `VPS_SSH_PORT` — opcional, default `22`.
+- `VPS_APP_DIR` — diretório na VPS que contém o `.env` de produção.
+- GHCR usa o `GITHUB_TOKEN` embutido do Actions — sem secret manual.
+
+Publicar uma versão = criar e empurrar a tag:
 
 ```bash
-# build
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+### Deploy manual (fallback)
+
+Direto na VPS, sem pipeline (emergência ou primeira subida):
+
+```bash
+# build local
 docker image build . -t base-mcp:1.0
 
 # run (detached)
-docker container run -d --env-file .env -p 50007:3000 \
-  -v base_data:/data --name base-mcp base-mcp:1.0
+docker container run -d --env-file .env -p 50010:3000 \
+  -v base_data:/data --restart unless-stopped --name base-mcp base-mcp:1.0
 
 # stop + rm
 docker stop base-mcp && docker rm base-mcp
-
-# update (git pull + rebuild + restart)
-git pull && docker image build . -t base-mcp:1.0 \
-  && docker stop base-mcp && docker rm base-mcp \
-  && docker container run -d --env-file .env -p 50007:3000 \
-     -v base_data:/data --name base-mcp base-mcp:1.0
 
 docker logs -f base-mcp
 ```

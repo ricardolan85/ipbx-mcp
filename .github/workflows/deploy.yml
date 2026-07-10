@@ -1,0 +1,124 @@
+name: deploy
+
+# Dispara só em tags de release semver: vX.X.X (rejeita pre-release tipo v1.2.3-rc1).
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# Não deixa dois deploys da mesma tag correrem em paralelo.
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Build & push (GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tag git "v1.2.3" -> versão "1.2.3" (usada na imagem e no deploy).
+      - name: Resolve version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy (VPS)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE: ${{ env.IMAGE }}
+          VERSION: ${{ needs.build.outputs.version }}
+          APP_DIR: ${{ secrets.VPS_APP_DIR }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || '22' }}
+          # Repassa as envs (inclusive o token efêmero) pro shell remoto.
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE,VERSION,APP_DIR
+          script: |
+            set -eu
+
+            # Login efêmero no GHCR com o GITHUB_TOKEN do job (sem PAT na VPS).
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            docker pull "$IMAGE:$VERSION"
+
+            # .env de produção vive nesse diretório na VPS.
+            cd "$APP_DIR"
+
+            docker stop base-mcp 2>/dev/null || true
+            docker rm base-mcp 2>/dev/null || true
+
+            docker run -d \
+              --env-file .env \
+              -p 50010:3000 \
+              -v base_data:/data \
+              --restart unless-stopped \
+              --name base-mcp \
+              "$IMAGE:$VERSION"
+
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            docker image prune -f >/dev/null 2>&1 || true
+
+            # Health check pós-deploy (falha o workflow se não subir).
+            echo "Aguardando /health..."
+            ok=0
+            for i in $(seq 1 10); do
+              if curl -fsS http://127.0.0.1:50010/health >/dev/null 2>&1; then ok=1; break; fi
+              sleep 3
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "ERRO: /health não respondeu após o deploy" >&2
+              docker logs --tail 50 base-mcp >&2 || true
+              exit 1
+            fi
+            echo "Deploy OK -> $IMAGE:$VERSION"
