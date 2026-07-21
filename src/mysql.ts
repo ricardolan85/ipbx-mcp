@@ -105,6 +105,110 @@ export async function getIpbxInfo(): Promise<IpbxRow | null> {
   return rows[0] ?? null;
 }
 
+export interface QueueRow extends RowDataPacket {
+  id: number;
+  name: string;
+  strategy: string;
+  member_count: number;
+  created: Date | null;
+  updated: Date | null;
+}
+
+export interface ListQueuesOptions {
+  search?: string;
+  limit: number;
+}
+
+/** Filas do tenant configurado, com quantos membros cada uma tem. */
+export async function listQueues(
+  opts: ListQueuesOptions,
+): Promise<QueueRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND (q.name LIKE ? OR q.strategy LIKE ?)";
+    const like = `%${opts.search}%`;
+    params.push(like, like);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<QueueRow>(
+    `SELECT q.id, q.name, q.strategy,
+            COUNT(m.id) AS member_count,
+            q.created, q.updated
+       FROM queue q
+       LEFT JOIN queue_member m
+         ON m.queue_id = q.id AND m.ipbx_id = q.ipbx_id
+      WHERE q.ipbx_id = ?
+      ${filter}
+      GROUP BY q.id, q.name, q.strategy, q.created, q.updated
+      ORDER BY q.name
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
+export interface QueueMemberRow extends RowDataPacket {
+  id: number;
+  queue_id: number;
+  queue_name: string | null;
+  position: string;
+  member_ref: string;
+  branch_exten: string | null;
+  branch_name: string | null;
+}
+
+export interface ListQueueMembersOptions {
+  queueId?: number;
+  limit: number;
+}
+
+/**
+ * Membros das filas do tenant, com a referencia resolvida.
+ *
+ * `queue_member.member` guarda uma referencia em string no formato
+ * `<tipo>-<id>` -- ex: `branch-10` aponta pro branch.id 10, que e o
+ * ramal 29. NAO e o numero do ramal. E nem todo membro e ramal: existe
+ * pelo menos um `redirect-N` no banco. Por isso o LEFT JOIN so casa
+ * quando o prefixo e `branch-`, e quem nao casa volta com o ref cru
+ * pra tool classificar.
+ *
+ * `index` e palavra reservada no MySQL 8: precisa de crase. Ele e
+ * varchar, entao a ordenacao precisa de CAST pra nao ficar
+ * lexicografica ("10" antes de "2").
+ */
+export async function listQueueMembers(
+  opts: ListQueueMembersOptions,
+): Promise<QueueMemberRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.queueId !== undefined) {
+    filter = "AND m.queue_id = ?";
+    params.push(opts.queueId);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<QueueMemberRow>(
+    `SELECT m.id, m.queue_id, q.name AS queue_name,
+            m.\`index\` AS position, m.member AS member_ref,
+            b.exten AS branch_exten, b.name AS branch_name
+       FROM queue_member m
+       LEFT JOIN queue q
+         ON q.id = m.queue_id AND q.ipbx_id = m.ipbx_id
+       LEFT JOIN branch b
+         ON m.member REGEXP '^branch-[0-9]+$'
+        AND b.id = CAST(SUBSTRING(m.member, 8) AS UNSIGNED)
+        AND b.ipbx_id = m.ipbx_id
+      WHERE m.ipbx_id = ?
+      ${filter}
+      ORDER BY q.name, CAST(m.\`index\` AS UNSIGNED)
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
 export interface TrunkRow extends RowDataPacket {
   id: number;
   name: string;

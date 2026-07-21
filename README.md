@@ -238,6 +238,52 @@ Lista os troncos da instância.
 
 **Não retorna as credenciais da operadora.** `username` e `password` ficam de fora — são a credencial mais valiosa do banco, já que permitem originar chamadas direto pela operadora, tarifadas na conta. No lugar delas vai `auth`, que diz apenas *como* o tronco autentica: `"credentials"` (usuário/senha) ou `"ip"` (allowlist de IP, sem senha).
 
+### `ipbx_queue_list`
+
+Lista as filas de atendimento, com a estratégia de distribuição e quantos membros cada uma tem.
+
+**Parâmetros:** `search` (string, opcional), `limit` (1–500, default `100`)
+
+```json
+{
+  "total": 5,
+  "queues": [
+    { "id": 1, "name": "Suporte", "strategy": "ringall", "members": 8 },
+    { "id": 5, "name": "Teste", "strategy": "leastrecent", "members": 1 }
+  ]
+}
+```
+
+### `ipbx_queue_member_list`
+
+Lista os membros das filas, na ordem de toque.
+
+**Parâmetros:**
+
+- `queue_id` (number, opcional): filtra uma fila; omita para trazer todas
+- `limit` (number, opcional): 1–500, default `200`
+
+**Retorno:**
+
+```json
+{
+  "total": 8,
+  "members": [
+    {
+      "queue_id": 1,
+      "queue": "Suporte",
+      "position": 1,
+      "type": "branch",
+      "exten": "29",
+      "name": "Mateus Damaceno",
+      "ref": "branch-10"
+    }
+  ]
+}
+```
+
+A coluna `queue_member.member` guarda uma referência no formato `<tipo>-<id>` — `branch-10` aponta para o `branch.id` 10, que é o ramal `29`. **Não é o número do ramal.** A tool resolve isso para `exten` + `name` quando o membro é um ramal. Nem todo membro é: existem entradas `redirect-N`, que voltam com `type: "redirect"` e `exten`/`name` nulos.
+
 Toda chamada gera uma linha em `audit_log` com a identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 
 ## Comandos

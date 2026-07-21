@@ -5,6 +5,8 @@ import {
   getIpbxInfo,
   listBranches,
   listGroups,
+  listQueueMembers,
+  listQueues,
   listTrunks,
   listUsers,
 } from "./mysql.js";
@@ -13,6 +15,16 @@ import {
 function blankToNull(value: string | null): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+/**
+ * `queue_member.member` e uma referencia `<tipo>-<id>` (ex: branch-10,
+ * redirect-2). Extrai o tipo pra tool nao fingir que todo membro e
+ * ramal.
+ */
+function memberType(ref: string): string {
+  const match = /^([a-z_]+)-\d+$/i.exec(ref.trim());
+  return match ? match[1]!.toLowerCase() : "desconhecido";
 }
 
 export function createServer(identity: AuthIdentity): McpServer {
@@ -396,6 +408,173 @@ export function createServer(identity: AuthIdentity): McpServer {
         return {
           isError: true,
           content: [{ type: "text", text: `Erro no ipbx_trunk_list: ${msg}` }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_queue_list",
+    {
+      description:
+        "Lista as filas de atendimento da instancia IPBX: nome, " +
+        "estrategia de distribuicao (ringall, leastrecent, etc) e " +
+        "quantos membros cada fila tem. Aceita busca por nome ou " +
+        "estrategia.",
+      inputSchema: {
+        search: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "Filtro opcional por nome da fila ou estrategia (busca " +
+              "parcial, sem diferenciar maiuscula).",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de filas a retornar. Default 100."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 100;
+        const rows = await listQueues({ search: input.search, limit });
+
+        const queues = rows.map((row) => ({
+          id: row.id,
+          name: row.name.trim(),
+          strategy: row.strategy,
+          members: row.member_count,
+        }));
+
+        const result = {
+          total: queues.length,
+          truncated: queues.length === limit,
+          queues,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_queue_list",
+          args: { search: input.search, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_queue_list",
+          args: { search: input.search, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Erro no ipbx_queue_list: ${msg}` }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_queue_member_list",
+    {
+      description:
+        "Lista os membros das filas de atendimento, na ordem de " +
+        "toque. Quando o membro e um ramal, resolve para numero e nome " +
+        "do usuario. Membros podem ser de outros tipos (ex: redirect), " +
+        "indicados no campo `type`. Use ipbx_queue_list para descobrir " +
+        "o queue_id.",
+      inputSchema: {
+        queue_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Filtra por uma fila especifica. Omita para trazer os " +
+              "membros de todas as filas.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de membros a retornar. Default 200."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 200;
+        const rows = await listQueueMembers({
+          queueId: input.queue_id,
+          limit,
+        });
+
+        const members = rows.map((row) => {
+          const type = memberType(row.member_ref);
+          return {
+            queue_id: row.queue_id,
+            queue: row.queue_name?.trim() ?? null,
+            position: Number(row.position),
+            type,
+            // Preenchidos so quando o membro e um ramal.
+            exten: row.branch_exten,
+            name: row.branch_name?.trim() ?? null,
+            ref: row.member_ref,
+          };
+        });
+
+        const result = {
+          total: members.length,
+          truncated: members.length === limit,
+          members,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_queue_member_list",
+          args: { queue_id: input.queue_id, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_queue_member_list",
+          args: { queue_id: input.queue_id, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Erro no ipbx_queue_member_list: ${msg}` },
+          ],
         };
       }
     },

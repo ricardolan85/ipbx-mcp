@@ -167,11 +167,39 @@ camada de aplicação.
 - `ipbx_trunk_list` — troncos (nome, host da operadora, porta, se
   registra/grava). Mesmo `search`/`limit`. Nunca retorna `username`
   nem `password`; em lugar deles devolve `auth: "credentials" | "ip"`.
+- `ipbx_queue_list` — filas de atendimento com estratégia e contagem
+  de membros. Mesmo `search`/`limit`.
+- `ipbx_queue_member_list` — membros das filas na ordem de toque,
+  com `branch-<id>` resolvido para número e nome do ramal. Filtro
+  `queue_id` opcional, `limit` default 200.
 - Nova capacidade = uma tool em `src/server.ts` (schema `zod`,
   captura de erro devolvendo `{ isError: true }`, chamada a
   `logToolCall`). Integrações externas com estado/cliente próprio
   ganham um módulo tipado dedicado em `src/` (ex: `src/<servico>.ts`),
   em vez de chamar o SDK solto dentro da tool.
+
+## Armadilhas do schema do PABX
+
+Descobertas ao construir as tools. Valem pra qualquer query nova:
+
+- **Sem foreign keys.** Nenhuma relação é imposta pelo banco. Use
+  `LEFT JOIN` nas relações — com `INNER` um registro órfão some da
+  lista em silêncio, que é o pior tipo de bug.
+- **Palavras reservadas.** As tabelas `groups` e a coluna
+  `queue_member.index` precisam de crase no MySQL 8.
+- **Referência por id embutido em string.** `queue_member.member`
+  guarda `branch-10`, `redirect-2` — o número depois do hífen é o
+  **id** da tabela, não o número do ramal. E nem todo membro é ramal:
+  resolva o tipo pelo prefixo em vez de assumir.
+- **Sujeira nos varchar.** Nomes vêm com espaço sobrando
+  (`"Comercial "`, `"Suporte "`) e campos opcionais vêm como `""` em
+  vez de `NULL`. Aplique `trim()` e normalize vazio pra `null`.
+- **Colunas numéricas em varchar.** `queue_member.index` é
+  `varchar(16)`: ordenar sem `CAST` dá ordem lexicográfica
+  ("10" antes de "2").
+- **`cdr` não tem `ipbx_id`.** É a única tabela com dado de tenant sem
+  o discriminador. Antes de expor CDR, descobrir como amarrar a
+  chamada ao tenant — senão vaza chamada entre clientes.
 
 ## Persistência local (SQLite)
 
