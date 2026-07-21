@@ -38,7 +38,8 @@ function refType(ref: string): string {
 export function createServer(identity: AuthIdentity): McpServer {
   const server = new McpServer({
     name: "mcp-ipbx",
-    version: "0.1.0",
+    // Manter em sincronia com a "version" do package.json a cada release.
+    version: "0.2.0",
   });
 
   server.registerTool(
