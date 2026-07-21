@@ -9,6 +9,9 @@ import {
   listIvrs,
   listQueueMembers,
   listQueues,
+  listRoutingRules,
+  listRoutings,
+  listRoutingTimes,
   listTrunks,
   listUsers,
 } from "./mysql.js";
@@ -749,6 +752,278 @@ export function createServer(identity: AuthIdentity): McpServer {
           isError: true,
           content: [
             { type: "text", text: `Erro no ipbx_ivr_option_list: ${msg}` },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_routing_list",
+    {
+      description:
+        "Lista os planos de roteamento da instancia IPBX (ex: entrada e " +
+        "saida), com quantas regras e quantas janelas de horario cada " +
+        "um tem. Use o id retornado para filtrar " +
+        "ipbx_routing_rule_list e ipbx_routing_time_list.",
+      inputSchema: {
+        search: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Filtro opcional por nome do plano (busca parcial)."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de planos a retornar. Default 100."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 100;
+        const rows = await listRoutings({ search: input.search, limit });
+
+        const routings = rows.map((row) => ({
+          id: row.id,
+          name: row.name.trim(),
+          rules: row.rule_count,
+          time_windows: row.time_count,
+        }));
+
+        const result = {
+          total: routings.length,
+          truncated: routings.length === limit,
+          routings,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_routing_list",
+          args: { search: input.search, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_routing_list",
+          args: { search: input.search, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Erro no ipbx_routing_list: ${msg}` },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_routing_time_list",
+    {
+      description:
+        "Lista as janelas de horario dos planos de roteamento. Cada " +
+        "janela tem faixas no formato do Asterisk (ex: '08:00-18:00,mon'), " +
+        "devolvidas como lista. Use ipbx_routing_list para o routing_id.",
+      inputSchema: {
+        routing_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Filtra por um plano especifico. Omita para trazer todas as " +
+              "janelas.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de janelas a retornar. Default 100."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 100;
+        const rows = await listRoutingTimes({
+          routingId: input.routing_id,
+          limit,
+        });
+
+        const windows = rows.map((row) => ({
+          id: row.id,
+          routing_id: row.routing_id,
+          routing: row.routing_name?.trim() ?? null,
+          name: row.name.trim(),
+          // Formato Asterisk: uma faixa por linha.
+          ranges: row.pattern
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean),
+        }));
+
+        const result = {
+          total: windows.length,
+          truncated: windows.length === limit,
+          time_windows: windows,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_routing_time_list",
+          args: { routing_id: input.routing_id, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_routing_time_list",
+          args: { routing_id: input.routing_id, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Erro no ipbx_routing_time_list: ${msg}` },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_routing_rule_list",
+    {
+      description:
+        "Lista as regras de roteamento (o dialplan). Cada regra casa um " +
+        "padrao de numero dentro de uma janela de horario, suprime N " +
+        "digitos, adiciona um prefixo e manda pro destino. O destino " +
+        "pode ser tronco, URA, ramal, fila, redirect ou app -- resolvido " +
+        "em `goto`. Use ipbx_routing_list para o routing_id.",
+      inputSchema: {
+        routing_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Filtra por um plano especifico. Omita para trazer as regras " +
+              "de todos os planos.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de regras a retornar. Default 200."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 200;
+        const rows = await listRoutingRules({
+          routingId: input.routing_id,
+          limit,
+        });
+
+        const rules = rows.map((row) => {
+          // goto2/goto3 estao vazios no banco hoje. Se um dia forem
+          // preenchidos, aparecem aqui em vez de sumir em silencio.
+          const extra = [row.goto2, row.goto3]
+            .map((v) => v?.trim())
+            .filter((v): v is string => Boolean(v));
+
+          return {
+            id: row.id,
+            routing_id: row.routing_id,
+            routing: row.routing_name?.trim() ?? null,
+            name: row.name.trim(),
+            time_window: row.time_name?.trim() ?? null,
+            match: row.match_rule,
+            // Coluna do banco e `supress` (typo). Exposto correto.
+            suppress: Number(row.supress) || 0,
+            prefix: blankToNull(row.prefix),
+            goto: {
+              type: refType(row.goto_ref),
+              name:
+                row.branch_name?.trim() ??
+                row.queue_name?.trim() ??
+                row.ivr_name?.trim() ??
+                row.redirect_name?.trim() ??
+                row.app_name?.trim() ??
+                row.trunk_name?.trim() ??
+                null,
+              exten: row.branch_exten ?? row.redirect_exten ?? null,
+              ref: row.goto_ref,
+            },
+            ...(extra.length ? { goto_extra: extra } : {}),
+          };
+        });
+
+        const result = {
+          total: rules.length,
+          truncated: rules.length === limit,
+          rules,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_routing_rule_list",
+          args: { routing_id: input.routing_id, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_routing_rule_list",
+          args: { routing_id: input.routing_id, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Erro no ipbx_routing_rule_list: ${msg}` },
           ],
         };
       }

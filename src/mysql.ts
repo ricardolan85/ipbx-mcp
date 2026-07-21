@@ -105,6 +105,190 @@ export async function getIpbxInfo(): Promise<IpbxRow | null> {
   return rows[0] ?? null;
 }
 
+export interface RoutingRow extends RowDataPacket {
+  id: number;
+  name: string;
+  rule_count: number;
+  time_count: number;
+}
+
+export interface ListRoutingsOptions {
+  search?: string;
+  limit: number;
+}
+
+/** Planos de roteamento do tenant (ex: "Entrada - Padrão", "Saida - Padrão"). */
+export async function listRoutings(
+  opts: ListRoutingsOptions,
+): Promise<RoutingRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND r.name LIKE ?";
+    params.push(`%${opts.search}%`);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<RoutingRow>(
+    `SELECT r.id, r.name,
+            (SELECT COUNT(*) FROM routing_rule rr
+              WHERE rr.routing_id = r.id AND rr.ipbx_id = r.ipbx_id)
+              AS rule_count,
+            (SELECT COUNT(*) FROM routing_time t
+              WHERE t.routing_id = r.id AND t.ipbx_id = r.ipbx_id)
+              AS time_count
+       FROM routing r
+      WHERE r.ipbx_id = ?
+      ${filter}
+      ORDER BY r.name
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
+export interface RoutingTimeRow extends RowDataPacket {
+  id: number;
+  routing_id: number;
+  routing_name: string | null;
+  name: string;
+  pattern: string;
+}
+
+export interface ListRoutingTimesOptions {
+  routingId?: number;
+  limit: number;
+}
+
+/**
+ * Janelas de horario dos planos. `pattern` vem no formato do Asterisk,
+ * uma faixa por linha: `08:00-18:00,mon`. A tool quebra em array.
+ */
+export async function listRoutingTimes(
+  opts: ListRoutingTimesOptions,
+): Promise<RoutingTimeRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.routingId !== undefined) {
+    filter = "AND t.routing_id = ?";
+    params.push(opts.routingId);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<RoutingTimeRow>(
+    `SELECT t.id, t.routing_id, r.name AS routing_name, t.name, t.pattern
+       FROM routing_time t
+       LEFT JOIN routing r
+         ON r.id = t.routing_id AND r.ipbx_id = t.ipbx_id
+      WHERE t.ipbx_id = ?
+      ${filter}
+      ORDER BY r.name, t.id
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
+export interface RoutingRuleRow extends RowDataPacket {
+  id: number;
+  routing_id: number;
+  routing_name: string | null;
+  time_name: string | null;
+  name: string;
+  match_rule: string;
+  supress: string;
+  prefix: string;
+  goto_ref: string;
+  goto2: string;
+  goto3: string;
+  branch_exten: string | null;
+  branch_name: string | null;
+  queue_name: string | null;
+  ivr_name: string | null;
+  redirect_exten: string | null;
+  redirect_name: string | null;
+  app_name: string | null;
+  trunk_name: string | null;
+}
+
+export interface ListRoutingRulesOptions {
+  routingId?: number;
+  limit: number;
+}
+
+/**
+ * Regras de roteamento -- o dialplan do PABX. Cada regra casa um
+ * padrao (`rule`) dentro de uma janela de horario, suprime N digitos,
+ * adiciona um prefixo e manda pro destino em `goto1`.
+ *
+ * `goto1` e polimorfico como o `ivr_option.goto`, mas com um tipo a
+ * mais: `trunk-<id>` (usado nas regras de saida). Por isso sao seis
+ * LEFT JOIN por tipo aqui, contra cinco la.
+ *
+ * `goto2`/`goto3` existem no schema e estao vazios em todas as linhas
+ * do banco hoje. Vao crus pra tool, que so os inclui na resposta se
+ * algum dia forem preenchidos -- melhor que sumir com o dado.
+ */
+export async function listRoutingRules(
+  opts: ListRoutingRulesOptions,
+): Promise<RoutingRuleRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.routingId !== undefined) {
+    filter = "AND rr.routing_id = ?";
+    params.push(opts.routingId);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<RoutingRuleRow>(
+    `SELECT rr.id, rr.routing_id, r.name AS routing_name,
+            t.name AS time_name,
+            rr.name, rr.rule AS match_rule, rr.supress, rr.prefix,
+            rr.goto1 AS goto_ref, rr.goto2, rr.goto3,
+            b.exten AS branch_exten, b.name AS branch_name,
+            q.name AS queue_name,
+            i.name AS ivr_name,
+            rd.exten AS redirect_exten, rd.name AS redirect_name,
+            ap.name AS app_name,
+            tk.name AS trunk_name
+       FROM routing_rule rr
+       LEFT JOIN routing r
+         ON r.id = rr.routing_id AND r.ipbx_id = rr.ipbx_id
+       LEFT JOIN routing_time t
+         ON t.id = rr.routing_time_id AND t.ipbx_id = rr.ipbx_id
+       LEFT JOIN branch b
+         ON rr.goto1 REGEXP '^branch-[0-9]+$'
+        AND b.id = CAST(SUBSTRING_INDEX(rr.goto1, '-', -1) AS UNSIGNED)
+        AND b.ipbx_id = rr.ipbx_id
+       LEFT JOIN queue q
+         ON rr.goto1 REGEXP '^queue-[0-9]+$'
+        AND q.id = CAST(SUBSTRING_INDEX(rr.goto1, '-', -1) AS UNSIGNED)
+        AND q.ipbx_id = rr.ipbx_id
+       LEFT JOIN ivr i
+         ON rr.goto1 REGEXP '^ivr-[0-9]+$'
+        AND i.id = CAST(SUBSTRING_INDEX(rr.goto1, '-', -1) AS UNSIGNED)
+        AND i.ipbx_id = rr.ipbx_id
+       LEFT JOIN redirect rd
+         ON rr.goto1 REGEXP '^redirect-[0-9]+$'
+        AND rd.id = CAST(SUBSTRING_INDEX(rr.goto1, '-', -1) AS UNSIGNED)
+        AND rd.ipbx_id = rr.ipbx_id
+       LEFT JOIN app ap
+         ON rr.goto1 REGEXP '^app-[0-9]+$'
+        AND ap.id = CAST(SUBSTRING_INDEX(rr.goto1, '-', -1) AS UNSIGNED)
+        AND ap.ipbx_id = rr.ipbx_id
+       LEFT JOIN trunk tk
+         ON rr.goto1 REGEXP '^trunk-[0-9]+$'
+        AND tk.id = CAST(SUBSTRING_INDEX(rr.goto1, '-', -1) AS UNSIGNED)
+        AND tk.ipbx_id = rr.ipbx_id
+      WHERE rr.ipbx_id = ?
+      ${filter}
+      ORDER BY r.name, rr.id
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
 export interface IvrRow extends RowDataPacket {
   id: number;
   name: string;

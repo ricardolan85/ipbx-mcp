@@ -342,6 +342,62 @@ Lista as opções das URAs — qual tecla leva a qual destino.
 
 O campo `digit` nem sempre é um dígito: `t` é timeout e padrões como `7X` casam faixas de ramal.
 
+### `ipbx_routing_list`
+
+Lista os planos de roteamento, com quantas regras e janelas de horário cada um tem.
+
+**Parâmetros:** `search` (string, opcional), `limit` (1–500, default `100`)
+
+```json
+{
+  "total": 2,
+  "routings": [
+    { "id": 1, "name": "Entrada - Padrão", "rules": 6, "time_windows": 3 },
+    { "id": 2, "name": "Saida - Padrão", "rules": 8, "time_windows": 1 }
+  ]
+}
+```
+
+### `ipbx_routing_time_list`
+
+Lista as janelas de horário dos planos.
+
+**Parâmetros:** `routing_id` (number, opcional), `limit` (1–500, default `100`)
+
+```json
+{
+  "id": 1,
+  "routing": "Entrada - Padrão",
+  "name": "Horario comercial",
+  "ranges": ["08:00-18:00,mon", "08:00-18:00,tue", "08:00-12:00,sat"]
+}
+```
+
+O `pattern` é armazenado no formato do Asterisk, uma faixa por linha; a tool devolve como lista.
+
+### `ipbx_routing_rule_list`
+
+Lista as regras de roteamento — o dialplan. Cada regra casa um padrão de número dentro de uma janela de horário, suprime dígitos, adiciona prefixo e envia ao destino.
+
+**Parâmetros:** `routing_id` (number, opcional), `limit` (1–500, default `200`)
+
+```json
+{
+  "id": 4,
+  "routing": "Saida - Padrão",
+  "name": "LDN",
+  "time_window": "Geral",
+  "match": "0ZZ.",
+  "suppress": 1,
+  "prefix": "55",
+  "goto": { "type": "trunk", "name": "Vivavox", "exten": null, "ref": "trunk-1" }
+}
+```
+
+`goto1` é polimórfico como o da URA, **mais o tipo `trunk`** (usado nas regras de saída) — seis destinos possíveis no total.
+
+Dois detalhes do schema tratados aqui: a coluna do banco chama-se `supress` (com um "p"), exposta como `suppress`; e `goto2`/`goto3` existem mas estão vazias em todas as linhas — aparecem como `goto_extra` apenas se algum dia forem preenchidas.
+
 
 Toda chamada gera uma linha em `audit_log` com a identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 

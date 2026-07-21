@@ -178,6 +178,14 @@ camada de aplicação.
 - `ipbx_ivr_option_list` — tecla → destino, com o `goto` polimórfico
   resolvido (branch/queue/ivr/redirect/app + literais). Filtro
   `ivr_id` opcional, `limit` default 200.
+- `ipbx_routing_list` — planos de roteamento (entrada/saída) com
+  contagem de regras e janelas.
+- `ipbx_routing_time_list` — janelas de horário, com o `pattern` do
+  Asterisk quebrado em lista de faixas. Filtro `routing_id` opcional.
+- `ipbx_routing_rule_list` — o dialplan: padrão casado, dígitos
+  suprimidos, prefixo e destino resolvido. `goto1` aceita um tipo a
+  mais que o da URA (`trunk`), daí seis joins. Filtro `routing_id`
+  opcional, `limit` default 200.
 - Nova capacidade = uma tool em `src/server.ts` (schema `zod`,
   captura de erro devolvendo `{ isError: true }`, chamada a
   `logToolCall`). Integrações externas com estado/cliente próprio
@@ -200,6 +208,13 @@ Descobertas ao construir as tools. Valem pra qualquer query nova:
   (`branch`, `queue`, `ivr`, `redirect`, `app`) e ainda aceita literal
   sem id (`internal`). Resolva com um LEFT JOIN por tipo, casando pelo
   prefixo, e trate o literal — nunca assuma um único destino.
+  `routing_rule.goto1` segue o mesmo formato e aceita **`trunk`**
+  além dos cinco.
+- **Colunas mortas.** `routing_rule.goto2` e `goto3` existem e estão
+  vazias em 100% das linhas. Não sumir com elas: expor só quando
+  preenchidas.
+- **Typo no schema.** A coluna é `supress` (um "p") em `routing_rule`
+  e `trunk_processing`. As tools expõem como `suppress`.
 - **Sujeira nos varchar.** Nomes vêm com espaço sobrando
   (`"Comercial "`, `"Suporte "`) e campos opcionais vêm como `""` em
   vez de `NULL`. Aplique `trim()` e normalize vazio pra `null`.
