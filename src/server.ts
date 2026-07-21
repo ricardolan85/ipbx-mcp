@@ -4,7 +4,7 @@ import { logToolCall, type AuthIdentity } from "./audit.js";
 
 export function createServer(identity: AuthIdentity): McpServer {
   const server = new McpServer({
-    name: "mcp-base",
+    name: "mcp-ipbx",
     version: "0.1.0",
   });
 

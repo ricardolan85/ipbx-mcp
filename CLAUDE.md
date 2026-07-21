@@ -4,13 +4,14 @@ Guia para o Claude Code ao trabalhar neste repositório.
 
 ## Visão geral
 
-Servidor MCP base em TypeScript (módulo ESM, transporte **Streamable HTTP**
-em modo stateless). É um scaffold: expõe uma tool `ping` de exemplo e
-concentra o valor na infra reaproveitável — validação de input,
-autenticação de usuários (bearer estático + OAuth) e auditoria. Novas
-capacidades entram como tools tipadas em `src/server.ts`.
+Servidor MCP do IPBX em TypeScript (módulo ESM, transporte **Streamable
+HTTP** em modo stateless). Nasceu do scaffold `base-mcp`, que já traz a
+infra reaproveitável — validação de input, autenticação de usuários
+(bearer estático + OAuth) e auditoria. Hoje só tem a tool `ping`
+herdada do scaffold; as capacidades do IPBX entram como tools tipadas
+em `src/server.ts`.
 
-URL pública canônica: `https://mcp.base.vivavox.com.br`.
+URL pública canônica: `https://mcp.ipbx.vivavox.com.br`.
 
 ## Stack
 
@@ -23,12 +24,12 @@ URL pública canônica: `https://mcp.base.vivavox.com.br`.
 
 ## Infra de produção
 
-- **URL canônica:** `https://mcp.base.vivavox.com.br`
+- **URL canônica:** `https://mcp.ipbx.vivavox.com.br`
 - **Reverse proxy:** Nginx Proxy Manager em Docker, IP público
   `191.252.178.174` (compartilhado pelos MCPs `*.vivavox.com.br`).
   Termina TLS com Let's Encrypt.
-- **Backend Node:** host:porta internos do container `base-mcp`
-  (deploy mapeia `50010:3000`). NPM faz `proxy_pass` direto —
+- **Backend Node:** host:porta internos do container `ipbx-mcp`
+  (deploy mapeia `50020:3000`). NPM faz `proxy_pass` direto —
   subdomínio mapeia pra raiz, sem reescrita de path.
 - **Streamable HTTP no NPM:** a aba Advanced do Proxy Host precisa de
   `proxy_buffering off; proxy_read_timeout 24h; proxy_send_timeout 24h;`.
@@ -184,7 +185,7 @@ Schemas existentes:
 Em prod o servidor roda em container Docker. `Dockerfile` multi-stage
 (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data`
 como volume pro SQLite, healthcheck no `/health`. A imagem é publicada
-no GHCR (`ghcr.io/<repo>`) e servida na VPS mapeando `50010:3000`.
+no GHCR (`ghcr.io/<repo>`) e servida na VPS mapeando `50020:3000`.
 
 ### CI/CD — `.github/workflows/deploy.yml`
 
@@ -202,9 +203,9 @@ Dois jobs:
   (usa o `GITHUB_TOKEN` repassado, sem PAT persistido na máquina),
   `docker pull` da imagem versionada, `cd` pro `VPS_APP_DIR` (onde
   vive o `.env` de prod), para/remove o container antigo e sobe o novo
-  com `--env-file .env -p 50010:3000 -v base_data:/data --restart
-  unless-stopped --name base-mcp`. Depois faz logout + `image prune`
-  e fecha com health check: polling em `http://127.0.0.1:50010/health`
+  com `--env-file .env -p 50020:3000 -v ipbx_data:/data --restart
+  unless-stopped --name ipbx-mcp`. Depois faz logout + `image prune`
+  e fecha com health check: polling em `http://127.0.0.1:50020/health`
   (10 tentativas, 3s cada) — se não responder, dumpa `docker logs` e
   falha o workflow.
 
@@ -228,22 +229,22 @@ Direto na VPS, sem pipeline (emergência ou primeira subida):
 
 ```bash
 # build local
-docker image build . -t base-mcp:1.0
+docker image build . -t ipbx-mcp:1.0
 
 # run (detached)
-docker container run -d --env-file .env -p 50010:3000 \
-  -v base_data:/data --restart unless-stopped --name base-mcp base-mcp:1.0
+docker container run -d --env-file .env -p 50020:3000 \
+  -v ipbx_data:/data --restart unless-stopped --name ipbx-mcp ipbx-mcp:1.0
 
 # stop + rm
-docker stop base-mcp && docker rm base-mcp
+docker stop ipbx-mcp && docker rm ipbx-mcp
 
-docker logs -f base-mcp
+docker logs -f ipbx-mcp
 ```
 
 Backup do SQLite:
 
 ```bash
-docker run --rm -v base_data:/data -v $PWD:/backup \
+docker run --rm -v ipbx_data:/data -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
 
@@ -285,7 +286,7 @@ curl -s -X POST http://localhost:3000/mcp \
 - Não aceitar login com email fora de `@vivavox.com.br`. Restrição da
   liderança. Valida o claim `hd` no callback do Google **mesmo** com
   consent screen Internal (defesa em profundidade).
-- Não voltar pra URL subpath (`mcp.vivavox.com.br/base`):
+- Não voltar pra URL subpath (`mcp.vivavox.com.br/ipbx`):
   spec OAuth do MCP exige well-known na raiz do host. Subdomínio por
   MCP é a forma certa.
 - Não gravar payloads sensíveis / PII de tools no `audit_log` — logue

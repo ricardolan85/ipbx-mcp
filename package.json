@@ -1,10 +1,10 @@
 {
-  "name": "base-mcp",
+  "name": "ipbx-mcp",
   "version": "0.1.0",
-  "description": "MCP server base (Streamable HTTP + OAuth/bearer + SQLite audit)",
+  "description": "MCP server IPBX (Streamable HTTP + OAuth/bearer + SQLite audit)",
   "type": "module",
   "bin": {
-    "base-mcp": "dist/index.js"
+    "ipbx-mcp": "dist/index.js"
   },
   "files": [
     "dist"

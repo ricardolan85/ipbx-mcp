@@ -125,7 +125,7 @@ app.listen(PORT, HOST, (err?: Error) => {
     console.error("Falha ao iniciar:", err);
     process.exit(1);
   }
-  console.error(`mcp-base ouvindo em http://${HOST}:${PORT}/mcp`);
+  console.error(`mcp-ipbx ouvindo em http://${HOST}:${PORT}/mcp`);
   console.error(
     `Auth: ${[HAS_JWT && "JWT", HAS_STATIC && "bearer estatico"]
       .filter(Boolean)

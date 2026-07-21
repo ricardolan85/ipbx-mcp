@@ -1,8 +1,8 @@
-# base-mcp
+# ipbx-mcp
 
-Servidor [MCP](https://modelcontextprotocol.io) base em TypeScript. Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log). Expõe uma tool `ping` de exemplo — use como scaffold para novos MCPs.
+Servidor [MCP](https://modelcontextprotocol.io) do IPBX em TypeScript. Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log). Herdado do scaffold `base-mcp` — hoje expõe só a tool `ping`; as capacidades do IPBX entram como novas tools.
 
-URL pública em produção: `https://mcp.base.vivavox.com.br`.
+URL pública em produção: `https://mcp.ipbx.vivavox.com.br`.
 
 ## Requisitos
 
@@ -34,7 +34,7 @@ Carregue o `.env` no processo (systemd `EnvironmentFile=`, docker `env_file:`, o
 
 | Variável                | Descrição                                                                 |
 | ----------------------- | ------------------------------------------------------------------------- |
-| `OAUTH_ISSUER`          | URL canônica do servidor (ex: `https://mcp.base.vivavox.com.br`)          |
+| `OAUTH_ISSUER`          | URL canônica do servidor (ex: `https://mcp.ipbx.vivavox.com.br`)          |
 | `OAUTH_JWT_SECRET`      | Chave HS256 dos JWTs (32 bytes hex)                                       |
 | `GOOGLE_CLIENT_ID`      | Do OAuth Client no Google Cloud Console                                   |
 | `GOOGLE_CLIENT_SECRET`  | Do OAuth Client no Google Cloud Console                                   |
@@ -121,21 +121,23 @@ curl -s -X POST http://localhost:3000/mcp \
 
 ### Docker (recomendado)
 
-`Dockerfile` multi-stage (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data` como volume pro SQLite, healthcheck via `/health`. Orquestração via `Makefile` (`docker run` direto com `--env-file .env`).
+`Dockerfile` multi-stage (`node:22-slim`), runtime como user não-root `mcp`, expõe `/data` como volume pro SQLite, healthcheck via `/health`. Em produção o deploy é automático via `.github/workflows/deploy.yml` (push de tag `vX.Y.Z` → build no GHCR → `docker run` na VPS). Manualmente:
 
 ```bash
-make build     # docker image build
-make run       # docker container run (detached)
-make stop      # docker stop + rm
-make update    # git pull + build + stop + run
-docker logs -f base-mcp
+docker image build . -t ipbx-mcp:1.0
+
+docker container run -d --env-file .env -p 50020:3000 \
+  -v ipbx_data:/data --restart unless-stopped --name ipbx-mcp ipbx-mcp:1.0
+
+docker stop ipbx-mcp && docker rm ipbx-mcp
+docker logs -f ipbx-mcp
 ```
 
 Backup do SQLite:
 
 ```bash
 docker run --rm \
-  -v base_data:/data \
+  -v ipbx_data:/data \
   -v $PWD:/backup \
   alpine tar czf /backup/sqlite-bkp.tgz -C /data .
 ```
@@ -144,14 +146,14 @@ docker run --rm \
 
 ```ini
 [Unit]
-Description=base-mcp
+Description=ipbx-mcp
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/var/local/base-mcp
+WorkingDirectory=/var/local/ipbx-mcp
 ExecStart=/usr/bin/node dist/index.js
-EnvironmentFile=/var/local/base-mcp/.env
+EnvironmentFile=/var/local/ipbx-mcp/.env
 User=mcp
 Restart=on-failure
 RestartSec=10
@@ -169,9 +171,9 @@ WantedBy=multi-user.target
 ```json
 {
   "mcpServers": {
-    "base": {
+    "ipbx": {
       "type": "http",
-      "url": "https://mcp.base.vivavox.com.br/mcp",
+      "url": "https://mcp.ipbx.vivavox.com.br/mcp",
       "headers": {
         "Authorization": "Bearer SEU_MCP_AUTH_TOKEN"
       }
@@ -182,7 +184,7 @@ WantedBy=multi-user.target
 
 ### claude.ai (OAuth)
 
-Adicionar como Custom Connector usando `https://mcp.base.vivavox.com.br/mcp`. O flow OAuth dispara automaticamente — claude.ai descobre o AS via `WWW-Authenticate`, registra um client via DCR, redireciona pro Google, recebe o code e troca por um access token.
+Adicionar como Custom Connector usando `https://mcp.ipbx.vivavox.com.br/mcp`. O flow OAuth dispara automaticamente — claude.ai descobre o AS via `WWW-Authenticate`, registra um client via DCR, redireciona pro Google, recebe o code e troca por um access token.
 
 ## Estrutura
 
@@ -204,5 +206,5 @@ sql/
   001_oauth_schema.sql           # oauth_clients, oauth_codes, oauth_refresh_tokens, audit_log
   002_oauth_authorize_tx.sql     # oauth_authorize_tx (state Google <-> params)
 Dockerfile
-Makefile
+.github/workflows/deploy.yml     # build GHCR + deploy SSH na VPS
 ```

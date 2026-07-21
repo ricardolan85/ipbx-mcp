@@ -1,4 +1,4 @@
--- Schema OAuth + audit log para mcp-base (SQLite)
+-- Schema OAuth + audit log para mcp-ipbx (SQLite)
 --
 -- Engine: SQLite. Arquivo apontado por SQLITE_PATH no .env (default
 -- ./data/app.db local, /data/app.db em prod via volume Docker).

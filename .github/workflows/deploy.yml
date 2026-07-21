@@ -95,15 +95,15 @@ jobs:
             # .env de produção vive nesse diretório na VPS.
             cd "$APP_DIR"
 
-            docker stop base-mcp 2>/dev/null || true
-            docker rm base-mcp 2>/dev/null || true
+            docker stop ipbx-mcp 2>/dev/null || true
+            docker rm ipbx-mcp 2>/dev/null || true
 
             docker run -d \
               --env-file .env \
-              -p 50010:3000 \
-              -v base_data:/data \
+              -p 50020:3000 \
+              -v ipbx_data:/data \
               --restart unless-stopped \
-              --name base-mcp \
+              --name ipbx-mcp \
               "$IMAGE:$VERSION"
 
             docker logout ghcr.io >/dev/null 2>&1 || true
@@ -113,12 +113,12 @@ jobs:
             echo "Aguardando /health..."
             ok=0
             for i in $(seq 1 10); do
-              if curl -fsS http://127.0.0.1:50010/health >/dev/null 2>&1; then ok=1; break; fi
+              if curl -fsS http://127.0.0.1:50020/health >/dev/null 2>&1; then ok=1; break; fi
               sleep 3
             done
             if [ "$ok" -ne 1 ]; then
               echo "ERRO: /health não respondeu após o deploy" >&2
-              docker logs --tail 50 base-mcp >&2 || true
+              docker logs --tail 50 ipbx-mcp >&2 || true
               exit 1
             fi
             echo "Deploy OK -> $IMAGE:$VERSION"
