@@ -7,9 +7,8 @@ Guia para o Claude Code ao trabalhar neste repositório.
 Servidor MCP do IPBX em TypeScript (módulo ESM, transporte **Streamable
 HTTP** em modo stateless). Nasceu do scaffold `base-mcp`, que já traz a
 infra reaproveitável — validação de input, autenticação de usuários
-(bearer estático + OAuth) e auditoria. Hoje só tem a tool `ping`
-herdada do scaffold; as capacidades do IPBX entram como tools tipadas
-em `src/server.ts`.
+(bearer estático + OAuth) e auditoria. Expõe os dados do PABX
+(MySQL, ver `src/mysql.ts`) como tools tipadas em `src/server.ts`.
 
 URL pública canônica: `https://mcp.ipbx.vivavox.com.br`.
 
@@ -53,6 +52,11 @@ URL pública canônica: `https://mcp.ipbx.vivavox.com.br`.
   `./data/app.db`), aplica pragmas (`journal_mode=WAL`,
   `foreign_keys=ON`) e roda todos os `sql/*.sql` em ordem alfabética
   (idempotente — schemas usam `IF NOT EXISTS`).
+- `src/mysql.ts` — acesso ao MySQL do IPBX (fonte de dados das tools).
+  Pool singleton lazy (`getPool()`), envs lidas sob demanda, helper
+  `query()` usando `execute` (prepared statement, nunca interpolação).
+  `getIpbxId()` lê e valida o tenant. Tipos de linha e funções de
+  consulta ficam aqui; as tools em `server.ts` só orquestram.
 - `src/audit.ts` — `logToolCall()` grava cada chamada de tool em
   `audit_log` com identidade, duração e resultado. Falha de audit
   não derruba a chamada da tool (loga e segue).
@@ -145,8 +149,12 @@ camada de aplicação.
 
 ## Tools
 
-- Hoje só `ping` — health check de exemplo que responde `pong` e ecoa
-  uma `message` opcional. Serve de template para novas tools.
+- `ipbx_info` — dados de cadastro do tenant configurado (nome, IP,
+  portas SIP/AMI). Sem parâmetros: a instância vem de `IPBX_ID`.
+  Serve de template para novas tools.
+- `branch_list` — ramais do tenant, com nome do grupo resolvido por
+  join. Filtro `search` opcional e `limit` 1–500 (default 100).
+  Nunca retorna `password` nem `username` (credencial SIP).
 - Nova capacidade = uma tool em `src/server.ts` (schema `zod`,
   captura de erro devolvendo `{ isError: true }`, chamada a
   `logToolCall`). Integrações externas com estado/cliente próprio
@@ -289,6 +297,16 @@ curl -s -X POST http://localhost:3000/mcp \
 - Não voltar pra URL subpath (`mcp.vivavox.com.br/ipbx`):
   spec OAuth do MCP exige well-known na raiz do host. Subdomínio por
   MCP é a forma certa.
+- Não aceitar `ipbx_id` como parâmetro de tool. O banco é multi-tenant
+  (uma instância Asterisk por cliente, tabela `ipbx`), mas cada MCP
+  atende um tenant só, vindo de `IPBX_ID` no ambiente. Se virar
+  parâmetro, o isolamento entre clientes passa a depender do que o
+  modelo manda na chamada. Um container + um subdomínio por tenant.
+- Não expor a coluna `password` da tabela `branch` — é a senha SIP do
+  ramal em claro. Quem tem ramal + senha registra um softphone e
+  origina chamadas. Liste colunas explicitamente, nunca `SELECT *`.
+- Não consultar `cdr` (~251k linhas) nem `sipcapture` (~1M) sem `LIMIT`
+  obrigatório e filtro de período — estoura o contexto e o servidor.
 - Não gravar payloads sensíveis / PII de tools no `audit_log` — logue
   só o metadado necessário pra rastrear a chamada. Evita PII no banco
   local.

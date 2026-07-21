@@ -5,6 +5,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { createServer } from "./server.js";
 import { requireAuth } from "./auth/middleware.js";
 import { getDb, closeDb } from "./sqlite.js";
+import { closePool } from "./mysql.js";
 import { registerOAuthRoutes } from "./oauth/routes.js";
 
 // Log de acesso pras rotas /mcp. Roda ANTES do requireAuth, entao
@@ -133,8 +134,9 @@ app.listen(PORT, HOST, (err?: Error) => {
   );
 });
 
-const shutdown = (signal: string) => () => {
+const shutdown = (signal: string) => async () => {
   console.error(`Recebido ${signal}, encerrando...`);
+  await closePool();
   closeDb();
   process.exit(0);
 };

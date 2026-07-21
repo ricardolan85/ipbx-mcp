@@ -1,6 +1,6 @@
 # ipbx-mcp
 
-Servidor [MCP](https://modelcontextprotocol.io) do IPBX em TypeScript. Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log). Herdado do scaffold `base-mcp` — hoje expõe só a tool `ping`; as capacidades do IPBX entram como novas tools.
+Servidor [MCP](https://modelcontextprotocol.io) do IPBX em TypeScript. Transporte **Streamable HTTP** em modo stateless, autenticação por **bearer estático** e/ou **OAuth 2.1 + Google Workspace**, persistência local em SQLite (clients OAuth, refresh tokens, audit log). Herdado do scaffold `base-mcp`, expõe os dados do PABX (MySQL) como tools tipadas.
 
 URL pública em produção: `https://mcp.ipbx.vivavox.com.br`.
 
@@ -51,6 +51,21 @@ Quando todas estão presentes, as rotas `/authorize`, `/oauth/google/callback`, 
 | `MCP_ALLOWED_HOSTS`  | —              | Lista CSV de hosts aceitos no header `Host`     |
 | `SQLITE_PATH`        | `./data/app.db`| Caminho do arquivo SQLite                       |
 
+### MySQL (fonte de dados do IPBX)
+
+| Variável            | Default | Descrição                                          |
+| ------------------- | ------- | -------------------------------------------------- |
+| `MYSQL_HOST`        | —       | Host do MySQL                                      |
+| `MYSQL_PORT`        | `3306`  |                                                    |
+| `MYSQL_USER`        | —       | Use um usuário dedicado com `GRANT SELECT` apenas  |
+| `MYSQL_PASSWORD`    | —       |                                                    |
+| `MYSQL_DATABASE`    | —       |                                                    |
+| `MYSQL_POOL_LIMIT`  | `5`     | Tamanho do pool (`mysql2`)                         |
+| `MYSQL_SSL`         | vazio   | Qualquer valor liga TLS com verificação de cert    |
+| `IPBX_ID`           | —       | Tenant que esta instância atende (ver abaixo)      |
+
+O banco é multi-tenant — uma instância Asterisk por cliente, tabela `ipbx` — mas **cada instância do MCP atende um tenant só**. Todas as queries filtram por `IPBX_ID`, e nenhuma tool aceita esse id como parâmetro: assim o isolamento entre clientes não depende do que o modelo passa na chamada. Um container e um subdomínio por tenant.
+
 Gere tokens aleatórios com:
 
 ```bash
@@ -76,22 +91,62 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Tools disponíveis
 
-### `ping`
+### `ipbx_info`
 
-Health check simples de exemplo: responde `pong`.
+Dados de cadastro da instância IPBX que este servidor atende — nome, IP e portas SIP/AMI.
 
-**Parâmetros:**
-
-- `message` (string, opcional): mensagem ecoada de volta na resposta
+**Parâmetros:** nenhum. A instância é fixa, definida por `IPBX_ID` no ambiente.
 
 **Retorno:**
 
 ```json
 {
-  "pong": true,
-  "message": null
+  "id": 1,
+  "shortname": "vivavox",
+  "fullname": "Vivavox Telecom",
+  "ipaddr": "138.94.55.155",
+  "sipport": 5601,
+  "amiport": 6501,
+  "created": "2024-06-17T16:37:59.000Z",
+  "updated": "2024-06-17T16:37:59.000Z"
 }
 ```
+
+Devolve `isError` se o `IPBX_ID` configurado não existir na tabela `ipbx`.
+
+### `branch_list`
+
+Lista os ramais da instância.
+
+**Parâmetros:**
+
+- `search` (string, opcional): busca parcial por número do ramal ou nome
+- `limit` (number, opcional): 1–500, default `100`
+
+**Retorno:**
+
+```json
+{
+  "total": 27,
+  "truncated": false,
+  "branches": [
+    {
+      "id": 2,
+      "exten": "23",
+      "name": "Ricardo Landim",
+      "group": "Suporte",
+      "record": true,
+      "webrtc": false,
+      "dtmf": "rfc4733",
+      "forward_busy": "035988023317",
+      "forward_noanswer": "035988023317",
+      "forward_noanswer_wait": 5
+    }
+  ]
+}
+```
+
+**Não retorna as credenciais SIP.** As colunas `password` (senha em claro) e `username` (identificador de autenticação, diferente do número do ramal) ficam de fora por design — juntas permitem registrar um softphone e originar chamadas na conta do cliente. A lista de colunas no `SELECT` é explícita justamente para que nenhuma delas entre por descuido.
 
 Toda chamada gera uma linha em `audit_log` com a identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 
@@ -191,7 +246,8 @@ Adicionar como Custom Connector usando `https://mcp.ipbx.vivavox.com.br/mcp`. O 
 ```
 src/
   index.ts            # bootstrap HTTP, leitura de env, registro de rotas
-  server.ts           # createServer() registra as tools (ping)
+  server.ts           # createServer() registra as tools (ipbx_info)
+  mysql.ts            # pool mysql2 + queries do IPBX (tenant fixo)
   sqlite.ts           # better-sqlite3 + apply schemas
   audit.ts            # logToolCall() -> audit_log
   auth/
