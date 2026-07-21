@@ -105,6 +105,56 @@ export async function getIpbxInfo(): Promise<IpbxRow | null> {
   return rows[0] ?? null;
 }
 
+export interface RedirectRow extends RowDataPacket {
+  id: number;
+  exten: string;
+  name: string;
+  forward: string;
+  trunk_id: number;
+  trunk_name: string | null;
+}
+
+export interface ListRedirectsOptions {
+  search?: string;
+  limit: number;
+}
+
+/**
+ * Redirects do tenant: ramais curtos que encaminham pra um numero
+ * externo saindo por um tronco. Aparecem como destino em fila, URA e
+ * regra de roteamento.
+ *
+ * Nao ha credencial aqui, mas `forward` e um numero de telefone
+ * pessoal em todas as linhas do banco -- dado pessoal, nao segredo.
+ * Nao logar no audit_log.
+ */
+export async function listRedirects(
+  opts: ListRedirectsOptions,
+): Promise<RedirectRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND (r.exten LIKE ? OR r.name LIKE ? OR r.forward LIKE ?)";
+    const like = `%${opts.search}%`;
+    params.push(like, like, like);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<RedirectRow>(
+    `SELECT r.id, r.exten, r.name, r.forward, r.trunk_id,
+            t.name AS trunk_name
+       FROM redirect r
+       LEFT JOIN trunk t
+         ON t.id = r.trunk_id AND t.ipbx_id = r.ipbx_id
+      WHERE r.ipbx_id = ?
+      ${filter}
+      ORDER BY LENGTH(r.exten), r.exten
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
 export interface RoutingRow extends RowDataPacket {
   id: number;
   name: string;

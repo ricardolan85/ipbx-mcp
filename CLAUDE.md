@@ -178,6 +178,10 @@ camada de aplicação.
 - `ipbx_ivr_option_list` — tecla → destino, com o `goto` polimórfico
   resolvido (branch/queue/ivr/redirect/app + literais). Filtro
   `ivr_id` opcional, `limit` default 200.
+- `ipbx_redirect_list` — ramais curtos que encaminham pra número
+  externo por um tronco. São os `redirect-<id>` que aparecem como
+  destino em fila, URA e roteamento. `forward` é telefone pessoal em
+  100% das linhas: não logar no `audit_log`.
 - `ipbx_routing_list` — planos de roteamento (entrada/saída) com
   contagem de regras e janelas.
 - `ipbx_routing_time_list` — janelas de horário, com o `pattern` do

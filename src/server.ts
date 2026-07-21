@@ -9,6 +9,7 @@ import {
   listIvrs,
   listQueueMembers,
   listQueues,
+  listRedirects,
   listRoutingRules,
   listRoutings,
   listRoutingTimes,
@@ -1025,6 +1026,89 @@ export function createServer(identity: AuthIdentity): McpServer {
           isError: true,
           content: [
             { type: "text", text: `Erro no ipbx_routing_rule_list: ${msg}` },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_redirect_list",
+    {
+      description:
+        "Lista os redirects da instancia IPBX: ramais curtos que " +
+        "encaminham para um numero externo saindo por um tronco. Sao os " +
+        "mesmos `redirect-<id>` que aparecem como destino em filas, URAs " +
+        "e regras de roteamento. Aceita busca por ramal, nome ou numero " +
+        "de destino.",
+      inputSchema: {
+        search: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "Filtro opcional por ramal, nome ou numero de destino " +
+              "(busca parcial).",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de redirects a retornar. Default 100."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 100;
+        const rows = await listRedirects({ search: input.search, limit });
+
+        const redirects = rows.map((row) => ({
+          id: row.id,
+          exten: row.exten,
+          name: row.name.trim(),
+          forward: row.forward,
+          trunk: row.trunk_name?.trim() ?? null,
+          ref: `redirect-${row.id}`,
+        }));
+
+        const result = {
+          total: redirects.length,
+          truncated: redirects.length === limit,
+          redirects,
+        };
+
+        // `forward` e telefone pessoal: fica fora do audit.
+        logToolCall({
+          identity,
+          tool: "ipbx_redirect_list",
+          args: { search: input.search, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_redirect_list",
+          args: { search: input.search, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Erro no ipbx_redirect_list: ${msg}` },
           ],
         };
       }

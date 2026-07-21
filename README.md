@@ -342,6 +342,30 @@ Lista as opções das URAs — qual tecla leva a qual destino.
 
 O campo `digit` nem sempre é um dígito: `t` é timeout e padrões como `7X` casam faixas de ramal.
 
+### `ipbx_redirect_list`
+
+Lista os redirects — ramais curtos que encaminham para um número externo saindo por um tronco. São os mesmos `redirect-<id>` que aparecem como destino em filas, URAs e regras de roteamento.
+
+**Parâmetros:** `search` (string, opcional — casa ramal, nome ou número), `limit` (1–500, default `100`)
+
+```json
+{
+  "total": 12,
+  "redirects": [
+    {
+      "id": 2,
+      "exten": "73",
+      "name": "Ricardo Landim",
+      "forward": "5535988023317",
+      "trunk": "Vivavox",
+      "ref": "redirect-2"
+    }
+  ]
+}
+```
+
+⚠️ **Dado pessoal.** `forward` é um número de celular pessoal em 100% das linhas — não é credencial, mas é dado pessoal sob LGPD. A tool o retorna porque é a razão de existir da tabela, mas ele **não** vai para o `audit_log`.
+
 ### `ipbx_routing_list`
 
 Lista os planos de roteamento, com quantas regras e janelas de horário cada um tem.
