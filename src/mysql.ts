@@ -105,6 +105,155 @@ export async function getIpbxInfo(): Promise<IpbxRow | null> {
   return rows[0] ?? null;
 }
 
+export interface TrunkRow extends RowDataPacket {
+  id: number;
+  name: string;
+  host: string;
+  port: string | null;
+  register: number;
+  record: number;
+  has_credentials: number;
+  created: Date | null;
+  updated: Date | null;
+}
+
+export interface ListTrunksOptions {
+  search?: string;
+  limit: number;
+}
+
+/**
+ * Troncos do tenant configurado.
+ *
+ * ATENCAO: `username` e `password` NAO entram aqui -- sao a credencial
+ * de autenticacao com a operadora, guardada em texto puro. E a
+ * credencial mais valiosa do banco: com ela se origina chamada
+ * diretamente pela operadora, tarifada na conta da Vivavox.
+ *
+ * Em vez do segredo, expomos `has_credentials`: diz se o tronco
+ * autentica por usuario/senha ou por IP (caso do Datora, sem senha).
+ * E o dado operacional que se quer saber, sem revelar nada.
+ */
+export async function listTrunks(
+  opts: ListTrunksOptions,
+): Promise<TrunkRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND (name LIKE ? OR host LIKE ?)";
+    const like = `%${opts.search}%`;
+    params.push(like, like);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<TrunkRow>(
+    `SELECT id, name, host, port, register, record,
+            (password IS NOT NULL AND password <> '') AS has_credentials,
+            created, updated
+       FROM trunk
+      WHERE ipbx_id = ?
+      ${filter}
+      ORDER BY name
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
+export interface GroupRow extends RowDataPacket {
+  id: number;
+  name: string;
+  description: string | null;
+  branch_count: number;
+  created: Date | null;
+  updated: Date | null;
+}
+
+export interface ListGroupsOptions {
+  search?: string;
+  limit: number;
+}
+
+/**
+ * Grupos de ramais do tenant configurado, com quantos ramais cada um
+ * tem. Diferente de `branch` e `users`, esta tabela nao guarda nenhuma
+ * credencial -- todas as colunas sao expostas.
+ *
+ * `groups` e palavra reservada no MySQL 8: precisa de crase.
+ * O LEFT JOIN mantem na lista os grupos sem nenhum ramal.
+ */
+export async function listGroups(
+  opts: ListGroupsOptions,
+): Promise<GroupRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND (g.name LIKE ? OR g.description LIKE ?)";
+    const like = `%${opts.search}%`;
+    params.push(like, like);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<GroupRow>(
+    `SELECT g.id, g.name, g.description,
+            COUNT(b.id) AS branch_count,
+            g.created, g.updated
+       FROM \`groups\` g
+       LEFT JOIN branch b
+         ON b.group_id = g.id AND b.ipbx_id = g.ipbx_id
+      WHERE g.ipbx_id = ?
+      ${filter}
+      GROUP BY g.id, g.name, g.description, g.created, g.updated
+      ORDER BY g.name
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
+export interface UserRow extends RowDataPacket {
+  id: number;
+  name: string;
+  email: string;
+  created: Date | null;
+  updated: Date | null;
+}
+
+export interface ListUsersOptions {
+  search?: string;
+  limit: number;
+}
+
+/**
+ * Usuarios do painel do tenant configurado.
+ *
+ * ATENCAO: a coluna `secret` NAO entra aqui. E a senha de login do
+ * painel, guardada em texto puro (sem hash) -- confirmado no banco:
+ * valores de 4 a 13 caracteres, nenhum padrao de bcrypt/MD5/SHA. Expor
+ * isso entrega acesso administrativo ao PABX. Nunca use SELECT *.
+ */
+export async function listUsers(opts: ListUsersOptions): Promise<UserRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND (name LIKE ? OR email LIKE ?)";
+    const like = `%${opts.search}%`;
+    params.push(like, like);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<UserRow>(
+    `SELECT id, name, email, created, updated
+       FROM users
+      WHERE ipbx_id = ?
+      ${filter}
+      ORDER BY name
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
 export interface BranchRow extends RowDataPacket {
   id: number;
   exten: string;

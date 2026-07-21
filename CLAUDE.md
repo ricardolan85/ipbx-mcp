@@ -135,6 +135,11 @@ camada de aplicação.
 - Variáveis lidas sob demanda: envs do Google (`GOOGLE_*`,
   `ALLOWED_GOOGLE_HD`) são lidas dentro do código OAuth e lançam erro
   se ausentes na primeira chamada.
+- **Nome de tool: `ipbx_<model>_<action>`.** Mesmo padrão dos outros
+  MCPs da Vivavox (`voxxer_client_get`, `noc_bgp_list`). `<model>` é a
+  entidade (`branch`, `queue`, `trunk`, `cdr`); `<action>` vem do
+  vocabulário `list` / `get` / `search` / `count`. A instância em si é
+  `instance` — `ipbx_instance_get`, não `ipbx_ipbx_get`.
 - Tools devem capturar erros e devolver `{ isError: true, content: [...] }`
   em vez de deixar a exceção propagar pro transporte.
 - Validação de input via `zod` é obrigatória para toda tool.
@@ -149,12 +154,19 @@ camada de aplicação.
 
 ## Tools
 
-- `ipbx_info` — dados de cadastro do tenant configurado (nome, IP,
-  portas SIP/AMI). Sem parâmetros: a instância vem de `IPBX_ID`.
+- `ipbx_instance_get` — dados de cadastro do tenant configurado (nome,
+  IP, portas SIP/AMI). Sem parâmetros: a instância vem de `IPBX_ID`.
   Serve de template para novas tools.
-- `branch_list` — ramais do tenant, com nome do grupo resolvido por
-  join. Filtro `search` opcional e `limit` 1–500 (default 100).
+- `ipbx_branch_list` — ramais do tenant, com nome do grupo resolvido
+  por join. Filtro `search` opcional e `limit` 1–500 (default 100).
   Nunca retorna `password` nem `username` (credencial SIP).
+- `ipbx_user_list` — usuários do painel (nome, email, datas). Mesmo
+  `search`/`limit`. Nunca retorna `secret` (senha do painel, em claro).
+- `ipbx_group_list` — grupos de ramais com a contagem de ramais de
+  cada um. Mesmo `search`/`limit`. Tabela sem coluna sensível.
+- `ipbx_trunk_list` — troncos (nome, host da operadora, porta, se
+  registra/grava). Mesmo `search`/`limit`. Nunca retorna `username`
+  nem `password`; em lugar deles devolve `auth: "credentials" | "ip"`.
 - Nova capacidade = uma tool em `src/server.ts` (schema `zod`,
   captura de erro devolvendo `{ isError: true }`, chamada a
   `logToolCall`). Integrações externas com estado/cliente próprio
@@ -304,7 +316,12 @@ curl -s -X POST http://localhost:3000/mcp \
   modelo manda na chamada. Um container + um subdomínio por tenant.
 - Não expor a coluna `password` da tabela `branch` — é a senha SIP do
   ramal em claro. Quem tem ramal + senha registra um softphone e
-  origina chamadas. Liste colunas explicitamente, nunca `SELECT *`.
+  origina chamadas. Vale o mesmo pra `username`: é `ext-17-NNN`, não
+  o número do ramal, então é a outra metade da credencial.
+- Não expor a coluna `secret` da tabela `users` — é a senha de login do
+  painel, também **em texto puro** (verificado: 4 a 13 caracteres,
+  nenhum padrão de hash). Dá acesso administrativo ao PABX.
+- Nas duas: liste colunas explicitamente, nunca `SELECT *`.
 - Não consultar `cdr` (~251k linhas) nem `sipcapture` (~1M) sem `LIMIT`
   obrigatório e filtro de período — estoura o contexto e o servidor.
 - Não gravar payloads sensíveis / PII de tools no `audit_log` — logue

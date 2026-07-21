@@ -91,7 +91,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Tools disponíveis
 
-### `ipbx_info`
+Nome das tools segue `ipbx_<model>_<action>`, com `<action>` no vocabulário `list` / `get` / `search` / `count`.
+
+### `ipbx_instance_get`
 
 Dados de cadastro da instância IPBX que este servidor atende — nome, IP e portas SIP/AMI.
 
@@ -114,7 +116,7 @@ Dados de cadastro da instância IPBX que este servidor atende — nome, IP e por
 
 Devolve `isError` se o `IPBX_ID` configurado não existir na tabela `ipbx`.
 
-### `branch_list`
+### `ipbx_branch_list`
 
 Lista os ramais da instância.
 
@@ -147,6 +149,94 @@ Lista os ramais da instância.
 ```
 
 **Não retorna as credenciais SIP.** As colunas `password` (senha em claro) e `username` (identificador de autenticação, diferente do número do ramal) ficam de fora por design — juntas permitem registrar um softphone e originar chamadas na conta do cliente. A lista de colunas no `SELECT` é explícita justamente para que nenhuma delas entre por descuido.
+
+### `ipbx_user_list`
+
+Lista os usuários do painel da instância.
+
+**Parâmetros:**
+
+- `search` (string, opcional): busca parcial por nome ou email
+- `limit` (number, opcional): 1–500, default `100`
+
+**Retorno:**
+
+```json
+{
+  "total": 6,
+  "truncated": false,
+  "users": [
+    {
+      "id": 11,
+      "name": "Suporte",
+      "email": "suporte@vivavox.com.br",
+      "created": "2024-07-10T13:56:41.000Z",
+      "updated": "2024-07-10T13:56:41.000Z"
+    }
+  ]
+}
+```
+
+**Não retorna a senha de acesso.** A coluna `secret` fica de fora: é a senha de login do painel, guardada **em texto puro** no banco (sem hash). Expor isso entregaria acesso administrativo ao PABX.
+
+### `ipbx_group_list`
+
+Lista os grupos de ramais da instância, com quantos ramais cada um tem.
+
+**Parâmetros:**
+
+- `search` (string, opcional): busca parcial por nome ou descrição
+- `limit` (number, opcional): 1–500, default `100`
+
+**Retorno:**
+
+```json
+{
+  "total": 6,
+  "truncated": false,
+  "groups": [
+    {
+      "id": 1,
+      "name": "Suporte",
+      "description": "Grupo do suporte",
+      "branches": 11
+    }
+  ]
+}
+```
+
+A tabela `groups` não guarda credenciais — ao contrário de `branch` e `users`, aqui todas as colunas são expostas.
+
+### `ipbx_trunk_list`
+
+Lista os troncos da instância.
+
+**Parâmetros:**
+
+- `search` (string, opcional): busca parcial por nome ou host
+- `limit` (number, opcional): 1–500, default `100`
+
+**Retorno:**
+
+```json
+{
+  "total": 2,
+  "truncated": false,
+  "trunks": [
+    {
+      "id": 1,
+      "name": "Vivavox",
+      "host": "sip.vivavox.com.br",
+      "port": "5060",
+      "register": true,
+      "record": true,
+      "auth": "credentials"
+    }
+  ]
+}
+```
+
+**Não retorna as credenciais da operadora.** `username` e `password` ficam de fora — são a credencial mais valiosa do banco, já que permitem originar chamadas direto pela operadora, tarifadas na conta. No lugar delas vai `auth`, que diz apenas *como* o tronco autentica: `"credentials"` (usuário/senha) ou `"ip"` (allowlist de IP, sem senha).
 
 Toda chamada gera uma linha em `audit_log` com a identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 
@@ -246,7 +336,7 @@ Adicionar como Custom Connector usando `https://mcp.ipbx.vivavox.com.br/mcp`. O 
 ```
 src/
   index.ts            # bootstrap HTTP, leitura de env, registro de rotas
-  server.ts           # createServer() registra as tools (ipbx_info)
+  server.ts           # createServer() registra as tools (ipbx_*)
   mysql.ts            # pool mysql2 + queries do IPBX (tenant fixo)
   sqlite.ts           # better-sqlite3 + apply schemas
   audit.ts            # logToolCall() -> audit_log
