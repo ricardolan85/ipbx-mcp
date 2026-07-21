@@ -40,7 +40,7 @@ export function createServer(identity: AuthIdentity): McpServer {
   const server = new McpServer({
     name: "mcp-ipbx",
     // Manter em sincronia com a "version" do package.json a cada release.
-    version: "0.2.0",
+    version: "0.3.0",
   });
 
   server.registerTool(
