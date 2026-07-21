@@ -172,6 +172,12 @@ camada de aplicação.
 - `ipbx_queue_member_list` — membros das filas na ordem de toque,
   com `branch-<id>` resolvido para número e nome do ramal. Filtro
   `queue_id` opcional, `limit` default 200.
+- `ipbx_ivr_list` — URAs com áudio associado e a **transcrição** do
+  que é falado (`audio.transcription`). `search` casa também no texto
+  da transcrição.
+- `ipbx_ivr_option_list` — tecla → destino, com o `goto` polimórfico
+  resolvido (branch/queue/ivr/redirect/app + literais). Filtro
+  `ivr_id` opcional, `limit` default 200.
 - Nova capacidade = uma tool em `src/server.ts` (schema `zod`,
   captura de erro devolvendo `{ isError: true }`, chamada a
   `logToolCall`). Integrações externas com estado/cliente próprio
@@ -187,10 +193,13 @@ Descobertas ao construir as tools. Valem pra qualquer query nova:
   lista em silêncio, que é o pior tipo de bug.
 - **Palavras reservadas.** As tabelas `groups` e a coluna
   `queue_member.index` precisam de crase no MySQL 8.
-- **Referência por id embutido em string.** `queue_member.member`
-  guarda `branch-10`, `redirect-2` — o número depois do hífen é o
-  **id** da tabela, não o número do ramal. E nem todo membro é ramal:
-  resolva o tipo pelo prefixo em vez de assumir.
+- **Referência polimórfica por id embutido em string.** Tanto
+  `queue_member.member` quanto `ivr_option.goto` guardam
+  `<tipo>-<id>` — `branch-10` é o **`branch.id`** 10 (ramal 29), não o
+  número do ramal. O `goto` aponta pra 5 tabelas diferentes
+  (`branch`, `queue`, `ivr`, `redirect`, `app`) e ainda aceita literal
+  sem id (`internal`). Resolva com um LEFT JOIN por tipo, casando pelo
+  prefixo, e trate o literal — nunca assuma um único destino.
 - **Sujeira nos varchar.** Nomes vêm com espaço sobrando
   (`"Comercial "`, `"Suporte "`) e campos opcionais vêm como `""` em
   vez de `NULL`. Aplique `trim()` e normalize vazio pra `null`.

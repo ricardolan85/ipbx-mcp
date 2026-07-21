@@ -5,6 +5,8 @@ import {
   getIpbxInfo,
   listBranches,
   listGroups,
+  listIvrOptions,
+  listIvrs,
   listQueueMembers,
   listQueues,
   listTrunks,
@@ -18,13 +20,16 @@ function blankToNull(value: string | null): string | null {
 }
 
 /**
- * `queue_member.member` e uma referencia `<tipo>-<id>` (ex: branch-10,
- * redirect-2). Extrai o tipo pra tool nao fingir que todo membro e
- * ramal.
+ * O PABX referencia outras entidades por string `<tipo>-<id>` --
+ * `branch-10`, `queue-3`, `redirect-2` -- tanto em
+ * `queue_member.member` quanto em `ivr_option.goto`. Alguns valores
+ * sao literais sem id (ex: `internal`); nesse caso o proprio literal
+ * e o tipo.
  */
-function memberType(ref: string): string {
-  const match = /^([a-z_]+)-\d+$/i.exec(ref.trim());
-  return match ? match[1]!.toLowerCase() : "desconhecido";
+function refType(ref: string): string {
+  const trimmed = ref.trim();
+  const match = /^([a-z_]+)-\d+$/i.exec(trimmed);
+  return (match ? match[1]! : trimmed).toLowerCase();
 }
 
 export function createServer(identity: AuthIdentity): McpServer {
@@ -528,7 +533,7 @@ export function createServer(identity: AuthIdentity): McpServer {
         });
 
         const members = rows.map((row) => {
-          const type = memberType(row.member_ref);
+          const type = refType(row.member_ref);
           return {
             queue_id: row.queue_id,
             queue: row.queue_name?.trim() ?? null,
@@ -574,6 +579,176 @@ export function createServer(identity: AuthIdentity): McpServer {
           isError: true,
           content: [
             { type: "text", text: `Erro no ipbx_queue_member_list: ${msg}` },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_ivr_list",
+    {
+      description:
+        "Lista as URAs (IVRs) da instancia IPBX: nome, audio associado, " +
+        "a transcricao do que e falado para quem liga, e quantas opcoes " +
+        "cada URA tem. Aceita busca por nome ou pelo texto da " +
+        "transcricao.",
+      inputSchema: {
+        search: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "Filtro opcional por nome da URA ou pelo conteudo da " +
+              "transcricao do audio (busca parcial).",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de URAs a retornar. Default 100."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 100;
+        const rows = await listIvrs({ search: input.search, limit });
+
+        const ivrs = rows.map((row) => ({
+          id: row.id,
+          name: row.name.trim(),
+          audio: blankToNull(row.audio_name),
+          transcription: blankToNull(row.transcription),
+          options: row.option_count,
+        }));
+
+        const result = {
+          total: ivrs.length,
+          truncated: ivrs.length === limit,
+          ivrs,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_ivr_list",
+          args: { search: input.search, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_ivr_list",
+          args: { search: input.search, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Erro no ipbx_ivr_list: ${msg}` }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "ipbx_ivr_option_list",
+    {
+      description:
+        "Lista as opcoes das URAs: qual tecla leva a qual destino. O " +
+        "destino pode ser ramal, fila, outra URA, redirect ou app -- o " +
+        "tipo vem em `goto.type` e o nome ja resolvido em `goto.name`. " +
+        "Use ipbx_ivr_list para descobrir o ivr_id.",
+      inputSchema: {
+        ivr_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Filtra por uma URA especifica. Omita para trazer as opcoes " +
+              "de todas as URAs.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Maximo de opcoes a retornar. Default 200."),
+      },
+    },
+    async (input) => {
+      const start = Date.now();
+      try {
+        const limit = input.limit ?? 200;
+        const rows = await listIvrOptions({ ivrId: input.ivr_id, limit });
+
+        const options = rows.map((row) => ({
+          ivr_id: row.ivr_id,
+          ivr: row.ivr_name?.trim() ?? null,
+          digit: row.digit,
+          goto: {
+            type: refType(row.goto_ref),
+            // Um dos joins por tipo preenche; literais nao preenchem
+            // nenhum e voltam so com type + ref.
+            name:
+              row.branch_name?.trim() ??
+              row.queue_name?.trim() ??
+              row.ivr_target_name?.trim() ??
+              row.redirect_name?.trim() ??
+              row.app_name?.trim() ??
+              null,
+            exten: row.branch_exten ?? row.redirect_exten ?? null,
+            ref: row.goto_ref,
+          },
+        }));
+
+        const result = {
+          total: options.length,
+          truncated: options.length === limit,
+          options,
+        };
+
+        logToolCall({
+          identity,
+          tool: "ipbx_ivr_option_list",
+          args: { ivr_id: input.ivr_id, limit },
+          resultOk: true,
+          durationMs: Date.now() - start,
+        });
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logToolCall({
+          identity,
+          tool: "ipbx_ivr_option_list",
+          args: { ivr_id: input.ivr_id, limit: input.limit },
+          resultOk: false,
+          errorMessage: msg,
+          durationMs: Date.now() - start,
+        });
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `Erro no ipbx_ivr_option_list: ${msg}` },
           ],
         };
       }

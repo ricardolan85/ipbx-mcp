@@ -105,6 +105,134 @@ export async function getIpbxInfo(): Promise<IpbxRow | null> {
   return rows[0] ?? null;
 }
 
+export interface IvrRow extends RowDataPacket {
+  id: number;
+  name: string;
+  audio_name: string | null;
+  transcription: string | null;
+  option_count: number;
+}
+
+export interface ListIvrsOptions {
+  search?: string;
+  limit: number;
+}
+
+/**
+ * URAs do tenant, com o audio associado e a transcricao do que e
+ * falado. A transcricao vem de `audio.transcription` e e o campo mais
+ * util da tool: diz o que o cliente ouve.
+ */
+export async function listIvrs(opts: ListIvrsOptions): Promise<IvrRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.search) {
+    filter = "AND (i.name LIKE ? OR a.transcription LIKE ?)";
+    const like = `%${opts.search}%`;
+    params.push(like, like);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<IvrRow>(
+    `SELECT i.id, i.name,
+            a.name AS audio_name, a.transcription,
+            (SELECT COUNT(*) FROM ivr_option o
+              WHERE o.ivr_id = i.id AND o.ipbx_id = i.ipbx_id) AS option_count
+       FROM ivr i
+       LEFT JOIN audio a
+         ON a.id = i.audio_id AND a.ipbx_id = i.ipbx_id
+      WHERE i.ipbx_id = ?
+      ${filter}
+      ORDER BY i.name
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
+export interface IvrOptionRow extends RowDataPacket {
+  id: number;
+  ivr_id: number;
+  ivr_name: string | null;
+  digit: string;
+  goto_ref: string;
+  branch_exten: string | null;
+  branch_name: string | null;
+  queue_name: string | null;
+  ivr_target_name: string | null;
+  redirect_exten: string | null;
+  redirect_name: string | null;
+  app_name: string | null;
+}
+
+export interface ListIvrOptionsOptions {
+  ivrId?: number;
+  limit: number;
+}
+
+/**
+ * Opcoes de URA com o destino resolvido.
+ *
+ * `ivr_option.goto` e polimorfico: aponta pra 5 tabelas diferentes no
+ * formato `<tipo>-<id>` (branch, queue, ivr, redirect, app) e ainda
+ * aceita literal sem id -- existe `internal` no banco. Por isso um
+ * LEFT JOIN por tipo, cada um casando so quando o prefixo bate, e a
+ * tool escolhe o nome que veio preenchido.
+ *
+ * `app.code` (o dialplan) NAO e exposto: e codigo de execucao do PABX,
+ * so o nome do app interessa aqui.
+ */
+export async function listIvrOptions(
+  opts: ListIvrOptionsOptions,
+): Promise<IvrOptionRow[]> {
+  const params: QueryParam[] = [getIpbxId()];
+  let filter = "";
+
+  if (opts.ivrId !== undefined) {
+    filter = "AND o.ivr_id = ?";
+    params.push(opts.ivrId);
+  }
+
+  // LIMIT vem de inteiro ja validado por zod (1..500).
+  return query<IvrOptionRow>(
+    `SELECT o.id, o.ivr_id, i.name AS ivr_name,
+            o.exten AS digit, o.goto AS goto_ref,
+            b.exten AS branch_exten, b.name AS branch_name,
+            q.name AS queue_name,
+            t.name AS ivr_target_name,
+            r.exten AS redirect_exten, r.name AS redirect_name,
+            ap.name AS app_name
+       FROM ivr_option o
+       LEFT JOIN ivr i
+         ON i.id = o.ivr_id AND i.ipbx_id = o.ipbx_id
+       LEFT JOIN branch b
+         ON o.goto REGEXP '^branch-[0-9]+$'
+        AND b.id = CAST(SUBSTRING_INDEX(o.goto, '-', -1) AS UNSIGNED)
+        AND b.ipbx_id = o.ipbx_id
+       LEFT JOIN queue q
+         ON o.goto REGEXP '^queue-[0-9]+$'
+        AND q.id = CAST(SUBSTRING_INDEX(o.goto, '-', -1) AS UNSIGNED)
+        AND q.ipbx_id = o.ipbx_id
+       LEFT JOIN ivr t
+         ON o.goto REGEXP '^ivr-[0-9]+$'
+        AND t.id = CAST(SUBSTRING_INDEX(o.goto, '-', -1) AS UNSIGNED)
+        AND t.ipbx_id = o.ipbx_id
+       LEFT JOIN redirect r
+         ON o.goto REGEXP '^redirect-[0-9]+$'
+        AND r.id = CAST(SUBSTRING_INDEX(o.goto, '-', -1) AS UNSIGNED)
+        AND r.ipbx_id = o.ipbx_id
+       LEFT JOIN app ap
+         ON o.goto REGEXP '^app-[0-9]+$'
+        AND ap.id = CAST(SUBSTRING_INDEX(o.goto, '-', -1) AS UNSIGNED)
+        AND ap.ipbx_id = o.ipbx_id
+      WHERE o.ipbx_id = ?
+      ${filter}
+      ORDER BY i.name, LENGTH(o.exten), o.exten
+      LIMIT ${Math.trunc(opts.limit)}`,
+    params,
+  );
+}
+
 export interface QueueRow extends RowDataPacket {
   id: number;
   name: string;

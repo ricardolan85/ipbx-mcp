@@ -284,6 +284,65 @@ Lista os membros das filas, na ordem de toque.
 
 A coluna `queue_member.member` guarda uma referência no formato `<tipo>-<id>` — `branch-10` aponta para o `branch.id` 10, que é o ramal `29`. **Não é o número do ramal.** A tool resolve isso para `exten` + `name` quando o membro é um ramal. Nem todo membro é: existem entradas `redirect-N`, que voltam com `type: "redirect"` e `exten`/`name` nulos.
 
+### `ipbx_ivr_list`
+
+Lista as URAs, com o áudio associado e a transcrição do que é falado para quem liga.
+
+**Parâmetros:** `search` (string, opcional — casa no nome **ou** no texto da transcrição), `limit` (1–500, default `100`)
+
+```json
+{
+  "total": 1,
+  "ivrs": [
+    {
+      "id": 5,
+      "name": "URA Rompimento",
+      "audio": "URA Rompimento",
+      "transcription": "Olá, se você está com falta de conexão e o LED Loss do seu modem óptico...",
+      "options": 1
+    }
+  ]
+}
+```
+
+A transcrição é o campo mais útil: permite achar uma URA pelo que ela diz, não só pelo nome.
+
+### `ipbx_ivr_option_list`
+
+Lista as opções das URAs — qual tecla leva a qual destino.
+
+**Parâmetros:**
+
+- `ivr_id` (number, opcional): filtra uma URA; omita para trazer todas
+- `limit` (number, opcional): 1–500, default `200`
+
+**Retorno:**
+
+```json
+{
+  "total": 7,
+  "options": [
+    {
+      "ivr_id": 1,
+      "ivr": "URA Principal - Horario comercial",
+      "digit": "1",
+      "goto": { "type": "queue", "name": "Financeiro", "exten": null, "ref": "queue-3" }
+    },
+    {
+      "ivr_id": 1,
+      "ivr": "URA Principal - Horario comercial",
+      "digit": "7X",
+      "goto": { "type": "internal", "name": null, "exten": null, "ref": "internal" }
+    }
+  ]
+}
+```
+
+`ivr_option.goto` é **polimórfico**: aponta para 5 tabelas diferentes (`branch`, `queue`, `ivr`, `redirect`, `app`) no formato `<tipo>-<id>`, e ainda aceita literais sem id (`internal`). A tool resolve o nome do destino em todos os casos; literais voltam com `name` nulo e o `ref` preservado.
+
+O campo `digit` nem sempre é um dígito: `t` é timeout e padrões como `7X` casam faixas de ramal.
+
+
 Toda chamada gera uma linha em `audit_log` com a identidade do chamador: email Google se JWT, `service:static` se bearer estático.
 
 ## Comandos
